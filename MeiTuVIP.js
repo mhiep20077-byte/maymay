@@ -1,143 +1,188 @@
-/***********************************************
- * Meitu XiuXiu / Wink — VIP Unlock (rewrite v2)
- * Chạy trên: Shadowrocket / Surge / Loon / Quantumult X
+/***************************************************************
+ * MeiTuVIP_v5.js  —  patch quyen VIP Meitu (ban HEP)
  *
- * Khác bản cũ ở 3 điểm:
- *  1. KHÔNG patch mù theo URL. Chỉ sửa body khi JSON thật sự có field VIP.
- *  2. Tự dò field VIP ở MỌI độ sâu (data / data.vip_info / user.info ...),
- *     nên app đổi tên field hay đổi đường dẫn vẫn ăn.
- *  3. Không bao giờ đụng luồng ảnh (beautify / process / material / upload / cdn / video)
- *     -> đây chính là chỗ làm app báo "lỗi kết nối mạng" lúc sửa ảnh.
+ * Nguyen tac an toan (7 lop):
+ *   1) Chi chay tren host trong ALLOW_HOSTS (mac dinh: api-sub.meitu.com)
+ *   2) Body khong phai JSON  -> tra nguyen ban
+ *   3) JSON parse fail       -> tra nguyen ban
+ *   4) Khong tim thay field VIP nao -> tra nguyen ban
+ *   5) Bat ky exception nao  -> tra nguyen ban
+ *   6) Chi xu ly HTTP 200, body < MAX_BODY
+ *   7) DRY = true -> chi log, KHONG sua (xem truoc)
  *
- * DEBUG = true -> chỉ log, không sửa gì (dùng để dò endpoint trên bản app mới)
- ***********************************************/
+ * => Khong bao gio cham CDN anh / video / template
+ * => Khong con "loi ket noi mang" nhu ban v1 (max-size=-1 + meitudata.com)
+ *
+ * Pattern khi add script trong Shadowrocket:
+ *   ^https?://api-sub\.meitu\.com/
+ ***************************************************************/
 
-var DEBUG = false;
-var FORCE_NAME = null;        // vd "Meitu VIP" nếu muốn ép screen_name; null = để nguyên
-var FAR_FUTURE = 4102444800;  // 2100-01-01
-var LONG_DAYS = 36500;
+var DRY = false;                                  // true = chi in log, khong sua
+var ALLOW_HOSTS = ['api-sub.meitu.com'];          // them 'api.meitu.com' neu probe cho thay VIP nam o do
+var MAX_BODY = 300000;                            // 300KB, qua thi bo qua
+var MAX_CHANGE = 40;                              // toi da 40 field / response
 
-var SKIP = [
-  'beautify', '/process', 'material', 'upload', '/cdn',
-  'template', 'sticker', '/im/', '/video', '/img',
-  '.jpg', '.jpeg', '.png', '.webp', '.gif', '.mp4', '.heic',
-  '/track', '/log', '/stat', '/report', 'analytics', 'advert', 'splash'
-];
+var NOW = Math.floor(Date.now() / 1000);
+var TEN_YEARS = 315360000;
 
-var RX_VIP    = /(vip|svip|premium|member|privile|entitle|subscri|trial)/i;
-var RX_EXPIRE = /expire/i;
-var RX_FLAG   = /^(is_?)?(vip|svip|premium|member|paid|pro)$|^vip_?(type|level|status|grade|flag|state|kind|class)$|^is_?(vip|svip|premium|member|paid|pro|valid)$/i;
-var RX_DAYS   = /(expire|remain|left)_?(days?|day)$/i;
-var RX_TIME   = /(expire|valid_?time|end_?time|deadline|overdue)/i;
-var RX_NO_TOUCH = /(price|amount|fee|cost|money|currency|text|desc|title|tips|msg|reason|icon|url|link|img|image|color|name|code|scheme|jump|redirect|pkg)/i;
+/* --- nhan dien ten field --- */
+// is_vip / isVip / vip / vipStatus / svip_flag / member / is_member / subscriber / paid ...
+var RX_BOOL = /^(is_?)?(vip|svip|member|premium|gold|paid|subscri(ber|bed))(_?(status|flag|valid|active|enabled))?$/i;
 
-function skipUrl(u) {
-  var s = String(u || '').toLowerCase();
-  for (var i = 0; i < SKIP.length; i++) {
-    if (s.indexOf(SKIP[i]) >= 0) return true;
+// vip_type / vipType / vip_level / memberType / user_level / privilege_level ...
+var RX_NUM  = /^((vip|svip|member|premium)_?(type|level|status|grade)|user_?level|privilege_?level)$/i;
+
+// expireTime / expire_at / expiredAt / vipEndTime / endTime / validTo / deadline ...
+var RX_TIME = /(expire|expired|deadline|valid_?(to|until|end)|end_?(time|at|date)|vip_?end|due_?date)/i;
+
+// remaining_days / leftDays / days_left / valid_days ...
+var RX_DAYS = /^(remaining_?days?|left_?days?|valid_?days?|rest_?days?|remain_?days?|days_?left)$/i;
+
+var changed = [];
+
+function touch(path, before, after) {
+  if (changed.length < MAX_CHANGE) {
+    changed.push(path + ': ' + JSON.stringify(before) + ' -> ' + JSON.stringify(after));
   }
-  return false;
 }
 
-function isNum(v) { return typeof v === 'number' && isFinite(v); }
+function walk(node, path, depth) {
+  if (!node || typeof node !== 'object' || depth > 10) return;
+  if (changed.length >= MAX_CHANGE) return;
 
-function patchValue(key, val) {
-  var kl = String(key).toLowerCase();
-  if (RX_NO_TOUCH.test(kl) && !RX_FLAG.test(kl)) return val;
-
-  if (typeof val === 'boolean') {
-    return (RX_FLAG.test(kl) || RX_VIP.test(kl)) ? true : val;
-  }
-
-  if (isNum(val)) {
-    if (RX_DAYS.test(kl)) return LONG_DAYS;
-    if (/^is_?expired?$/i.test(kl) || /^expired$/i.test(kl)) return 0;
-    if (RX_EXPIRE.test(kl) || RX_TIME.test(kl)) {
-      if (val === 0) return FAR_FUTURE;
-      return (val > 1e9) ? FAR_FUTURE : 0;
-    }
-    if (RX_FLAG.test(kl) || RX_VIP.test(kl)) return (val <= 0) ? 1 : val;
-    return val;
-  }
-
-  if (typeof val === 'string' && RX_FLAG.test(kl)) {
-    var low = val.toLowerCase();
-    if (val === '' || val === '0' || low === 'false' || low === 'none' || low === 'null') {
-      return (low === 'false' || low === 'none' || low === 'null') ? 'true' : '1';
-    }
-  }
-  return val;
-}
-
-var _paths = [];
-
-function walk(node, path, ctx) {
-  if (node === null || typeof node !== 'object') return;
-  var i, k, v;
+  var k, v, i, lk, n, sec;
 
   if (Array.isArray(node)) {
-    for (i = 0; i < node.length; i++) walk(node[i], path + '[' + i + ']', ctx);
+    for (i = 0; i < Math.min(node.length, 30); i++) {
+      walk(node[i], path + '[' + i + ']', depth + 1);
+    }
     return;
   }
 
   for (k in node) {
     if (!Object.prototype.hasOwnProperty.call(node, k)) continue;
     v = node[k];
+    lk = String(k);
 
+    // di sau vao object/array
     if (v !== null && typeof v === 'object') {
-      walk(v, path + '.' + k, ctx);
+      walk(v, path + '.' + lk, depth + 1);
+      continue;
+    }
+    if (v === null) continue;
+
+    /* 1) boolean co VIP -> true */
+    if (typeof v === 'boolean' && RX_BOOL.test(lk) && v === false) {
+      touch(path + '.' + lk, v, true);
+      if (!DRY) node[k] = true;
       continue;
     }
 
-    if (DEBUG) {
-      if ((RX_VIP.test(k) || RX_EXPIRE.test(k)) && _paths.length < 80) {
-        _paths.push(path + '.' + k + '=' + JSON.stringify(v));
+    /* 2) so cap VIP = 0 -> 1 */
+    if (typeof v === 'number' && RX_NUM.test(lk) && v <= 0) {
+      touch(path + '.' + lk, v, 1);
+      if (!DRY) node[k] = 1;
+      continue;
+    }
+
+    /* 3) string so cap VIP "0" -> "1" */
+    if (typeof v === 'string' && RX_NUM.test(lk) && /^-?\d+$/.test(v)) {
+      n = parseInt(v, 10);
+      if (n <= 0) {
+        touch(path + '.' + lk, v, '1');
+        if (!DRY) node[k] = '1';
       }
       continue;
     }
 
-    if (k === 'screen_name') {
-      if (FORCE_NAME && node[k] !== FORCE_NAME) { node[k] = FORCE_NAME; ctx.hit = true; }
+    /* 4) timestamp het han (giay) -> +10 nam */
+    if (typeof v === 'number' && RX_TIME.test(lk) && v > 1000000000) {
+      sec = v > 1e12 ? Math.floor(v / 1000) : v;
+      if (sec < NOW + 86400) {
+        var nv = (v > 1e12) ? (NOW + TEN_YEARS) * 1000 : (NOW + TEN_YEARS);
+        touch(path + '.' + lk, v, nv);
+        if (!DRY) node[k] = nv;
+      }
       continue;
     }
 
-    var nv = patchValue(k, v);
-    if (nv !== v) { node[k] = nv; ctx.hit = true; }
+    /* 5) timestamp het han (string 10 so) */
+    if (typeof v === 'string' && RX_TIME.test(lk) && /^\d{10}$/.test(v)) {
+      if (parseInt(v, 10) < NOW + 86400) {
+        var sv = String(NOW + TEN_YEARS);
+        touch(path + '.' + lk, v, sv);
+        if (!DRY) node[k] = sv;
+      }
+      continue;
+    }
+
+    /* 6) so ngay con lai -> 3650 */
+    if (typeof v === 'number' && RX_DAYS.test(lk) && v < 365) {
+      touch(path + '.' + lk, v, 3650);
+      if (!DRY) node[k] = 3650;
+      continue;
+    }
+
+    /* 7) string co VIP gia ("0"/"false"/"") -> "1" */
+    if (typeof v === 'string' && RX_BOOL.test(lk) && (v === '0' || v === 'false' || v === '')) {
+      touch(path + '.' + lk, v, '1');
+      if (!DRY) node[k] = '1';
+    }
   }
+}
+
+function pass() {
+  $done({});
 }
 
 function run() {
-  var body = $response.body;
   var url = $request.url || '';
+  var host = '';
 
-  if (!body || skipUrl(url)) { $done({}); return; }
+  try {
+    host = url.split('://')[1].split('/')[0].split(':')[0].toLowerCase();
+  } catch (e) {
+    pass(); return;
+  }
+
+  if (ALLOW_HOSTS.indexOf(host) < 0) { pass(); return; }
+
+  var resp = $response || {};
+  var st = resp.statusCode || 0;
+  if (st && st !== 200) { pass(); return; }
+
+  var body = (typeof resp.body === 'string') ? resp.body : '';
+  if (!body || body.length > MAX_BODY) { pass(); return; }
+
+  var t = body.trim();
+  if (t.charAt(0) !== '{' && t.charAt(0) !== '[') { pass(); return; }
 
   var obj;
-  if (typeof body === 'string') {
-    var t = body.trim();
-    if (t.charAt(0) !== '{' && t.charAt(0) !== '[') { $done({}); return; }
-    try { obj = JSON.parse(t); } catch (e) { $done({}); return; }
-  } else if (typeof body === 'object') {
-    obj = body;
-  } else {
-    $done({}); return;
+  try {
+    obj = JSON.parse(t);
+  } catch (e) {
+    pass(); return;
+  }
+  if (!obj || typeof obj !== 'object') { pass(); return; }
+
+  changed = [];
+  try {
+    walk(obj, '$', 0);
+  } catch (e) {
+    pass(); return;
   }
 
-  if (!obj || typeof obj !== 'object') { $done({}); return; }
+  if (!changed.length) { pass(); return; }
 
-  if (DEBUG) {
-    _paths = [];
-    walk(obj, '$', { hit: false });
-    console.log('[MeituVIP] ' + url);
-    console.log('[MeituVIP] ' + (_paths.length ? _paths.join(' | ') : '(no vip field)'));
-    $done({});
-    return;
+  console.log('[VIP] ' + url.split('?')[0] + (DRY ? ' [DRY] ' : ' ') + changed.join(' | '));
+
+  if (DRY) { pass(); return; }
+
+  try {
+    $done({ body: JSON.stringify(obj) });
+  } catch (e) {
+    pass();
   }
-
-  var ctx = { hit: false };
-  walk(obj, '$', ctx);
-  if (!ctx.hit) { $done({}); return; }
-  $done({ body: JSON.stringify(obj) });
 }
 
-try { run(); } catch (err) { $done({}); }
+try { run(); } catch (err) { try { $done({}); } catch (e2) {} }

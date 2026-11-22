@@ -1,0 +1,18 @@
+#!name=Meitu VIP v5 (narrow, raw)
+#!desc=Ban y het Meitu.sgmodule nhung script lay tu raw.githubusercontent (cap nhat tuc thi, khong cache)
+#!system=ios
+#!=========================================================
+# Dung ban nay khi jsDelivr con cache ban cu.
+# Nhuoc diem: raw.githubusercontent hay bi chan o mang VN -> mo thu bang Safari truoc.
+#
+# Link module:
+#   https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/Meitu_raw.sgmodule
+# ==========================================================
+
+[MITM]
+hostname = %APPEND%, api-sub.meitu.com
+
+[Script]
+Meitu VIP v5 = type=http-response,pattern=^https?://api-sub\.meitu\.com/,requires-body=1,max-size=524288,timeout=10,script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/MeiTuVIP.js
+
+# Meitu PROBE v5 = type=http-response,pattern=^https?://api-sub\.meitu\.com/,requires-body=1,max-size=524288,timeout=10,script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/MeiTuProbe.js

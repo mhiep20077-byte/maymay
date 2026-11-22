@@ -1,17 +1,30 @@
-#!name=Meitu VIP (rewrite v2)
-#!desc=Unlock VIP Meitu XiuXiu & Wink - chỉ MITM host API, KHÔNG đụng CDN ảnh
+#!name=Meitu VIP v5 (narrow)
+#!desc=Mo khoa VIP Meitu XiuXiu 12.23.5 - chi MITM api-sub.meitu.com, khong dung CDN anh
 #!system=ios
-#!====================================================
-# Cài: Surge/Loon -> module này. Shadowrocket -> dùng file Meitu.conf
-# script-path sửa thành link raw của bạn (worker/gist) hoặc tên file local tuỳ app.
+#!=========================================================
+# v5 - ban HEP. Chi 1 host API. Khong dung *.meitu.com / meitudata.com
+#
+# script-path tro ve root repo (dung ten file co san):
+#   MeiTuVIP.js   = patch
+#   MeiTuProbe.js = chi ghi log
+#
+# Link module de import vao Shadowrocket:
+#   https://cdn.jsdelivr.net/gh/mhiep20077-byte/maymay@main/Meitu.sgmodule
+# hoac:
+#   https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/Meitu.sgmodule
+# ==========================================================
 
 [MITM]
-hostname = %APPEND%, api-sub.meitu.com, api.meitu.com, *.xiuxiu.meitu.com
-# Cố tình KHÔNG đưa meitudata.com / res / file / img vào đây:
-# đó là CDN ảnh + template, MITM vào là app báo "lỗi kết nối mạng" khi sửa ảnh.
+hostname = %APPEND%, api-sub.meitu.com
 
 [Script]
-Meitu VIP = type=http-response,pattern=^https?:\/\/[^\/]*meitu\.com\/,requires-body=1,max-size=524288,timeout=10,script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/MeiTuVIP.js
+Meitu VIP v5 = type=http-response,pattern=^https?://api-sub\.meitu\.com/,requires-body=1,max-size=524288,timeout=10,script-path=https://cdn.jsdelivr.net/gh/mhiep20077-byte/maymay@main/MeiTuVIP.js
 
-# Bản dò endpoint (bật khi VIP không ăn): comment dòng trên, bỏ comment dòng dưới
-# Meitu PROBE = type=http-response,pattern=^https?:\/\/[^\/]*meitu\.com\/,requires-body=1,max-size=524288,timeout=10,script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/MeiTuProbe.js
+# Ban do endpoint: bo # dong duoi, comment dong tren (khi VIP khong an)
+# Meitu PROBE v5 = type=http-response,pattern=^https?://api-sub\.meitu\.com/,requires-body=1,max-size=524288,timeout=10,script-path=https://cdn.jsdelivr.net/gh/mhiep20077-byte/maymay@main/MeiTuProbe.js
+
+# ==========================================================
+# TUYET DOI KHONG them vao hostname:
+#   *.meitu.com / *.xiuxiu.meitu.com / meitudata.com / res / file / img
+# Do la CDN anh -> MITM vao la app bao "loi ket noi mang" khi chinh anh.
+# ==========================================================

@@ -1,65 +1,82 @@
-/***********************************************
- * Meitu — PROBE (chỉ đọc, KHÔNG sửa gì)
- * Dùng để dò xem bản Meitu mới lấy thông tin VIP từ endpoint nào.
- * Cách dùng: bật module probe, mở app, vào tab "Tôi"/VIP, xem log Shadowrocket.
- * Thấy dòng [PROBE] ... vip_type=... tức là endpoint đó chứa dữ liệu VIP.
- ***********************************************/
+/***************************************************************
+ * MeiTuProbe_v5.js  —  CHI GHI LOG, KHONG SUA GI
+ *
+ * Muc dich: tim dung endpoint chua du lieu VIP tren Meitu 12.23.5
+ * An toan: $done({}) o moi nhanh -> khong bao gio lam hong response
+ *
+ * Pattern (o regex khi add script trong Shadowrocket):
+ *   ^https?://api-sub\.meitu\.com/
+ *
+ * Xem log o: Shadowrocket -> tab Script / Log, hoac Log -> Script Log
+ ***************************************************************/
 
-var RX_VIP = /(vip|svip|premium|member|privile|entitle|subscri|trial|expire|valid_time|rights)/i;
-var MAX_PATHS = 40;
+var RX_VIP = /(vip|svip|premium|member|privile|entitle|subscri|trial|expire|valid_?time|rights|gold|benefit|pay|order)/i;
+var MAX_FIELDS = 25;
+var MAX_BODY = 400000;
 
-var _paths = [];
-
-function walk(node, path, depth) {
-  if (!node || typeof node !== 'object' || depth > 8) return;
-  var i, k, v;
+function walk(node, path, depth, out) {
+  if (!node || typeof node !== 'object' || depth > 8 || out.length >= MAX_FIELDS) return;
+  var k, v, i;
 
   if (Array.isArray(node)) {
-    for (i = 0; i < Math.min(node.length, 5); i++) walk(node[i], path + '[' + i + ']', depth + 1);
+    for (i = 0; i < Math.min(node.length, 4) && out.length < MAX_FIELDS; i++) {
+      walk(node[i], path + '[' + i + ']', depth + 1, out);
+    }
     return;
   }
+
   for (k in node) {
     if (!Object.prototype.hasOwnProperty.call(node, k)) continue;
     v = node[k];
-    if (v !== null && typeof v === 'object') { walk(v, path + '.' + k, depth + 1); continue; }
-    if (RX_VIP.test(k) && _paths.length < MAX_PATHS) {
-      var sv = JSON.stringify(v);
-      if (sv && sv.length > 80) sv = sv.slice(0, 80) + '…';
-      _paths.push(path + '.' + k + '=' + sv);
+
+    if (v !== null && typeof v === 'object') {
+      walk(v, path + '.' + k, depth + 1, out);
+      continue;
+    }
+
+    if (RX_VIP.test(k) && out.length < MAX_FIELDS) {
+      var sv = '';
+      try { sv = JSON.stringify(v); } catch (e) { sv = String(v); }
+      if (sv && sv.length > 60) sv = sv.slice(0, 60) + '...';
+      out.push(path + '.' + k + '=' + sv);
     }
   }
 }
 
 function run() {
   var url = $request.url || '';
-  var body = $response.body;
-  var head = '';
+  var host = '';
+  var path = '';
 
   try {
-    if ($response.headers) {
-      var h = $response.headers;
-      head = ' [' + (h['Content-Type'] || h['content-type'] || '?') + ']';
-    }
+    var m = url.match(/^https?:\/\/([^\/]+)(\/[^?#]*)?/);
+    if (m) { host = m[1]; path = m[2] || '/'; }
   } catch (e) {}
 
-  var info = '[PROBE] ' + url + head + ' len=' + (body ? String(body).length : 0);
+  var resp = $response || {};
+  var body = (typeof resp.body === 'string') ? resp.body : '';
+  var st = resp.statusCode || 0;
+  var info = '[PROBE] ' + host + path + ' st=' + st + ' len=' + body.length;
 
   try {
-    if (typeof body === 'string') {
+    if (body && body.length <= MAX_BODY) {
       var t = body.trim();
       if (t.charAt(0) === '{' || t.charAt(0) === '[') {
-        try {
-          var obj = JSON.parse(t);
-          _paths = [];
-          walk(obj, '$', 0);
-          if (_paths.length) info += '\n[PROBE] ' + _paths.join(' | ');
-          else info += '  (json nhưng không có field vip)';
-        } catch (e) {
-          info += '  (json parse fail -> có thể là protobuf/binary)';
+        var obj = null;
+        try { obj = JSON.parse(t); } catch (e) { obj = null; }
+
+        if (obj) {
+          var out = [];
+          walk(obj, '$', 0, out);
+          info += out.length ? ('\n[PROBE] ' + out.join(' | ')) : '  (json, khong co field vip)';
+        } else {
+          info += '  (json parse fail -> protobuf/binary)';
         }
       } else {
-        info += '  (không phải json: ' + t.slice(0, 40).replace(/\s+/g, ' ') + ')';
+        info += '  (not-json: ' + t.slice(0, 30).replace(/\s+/g, ' ') + ')';
       }
+    } else if (body) {
+      info += '  (body qua lon, bo qua)';
     }
   } catch (e) {}
 
@@ -67,4 +84,4 @@ function run() {
   $done({});
 }
 
-try { run(); } catch (err) { $done({}); }
+try { run(); } catch (err) { try { $done({}); } catch (e2) {} }
