@@ -1,6 +1,17 @@
 // ============================================================================
 // spotify-vn-premium / scripts/spotify-premium.js
-// Build: 2026-11-24 · v1.0.0
+// Build: 2026-11-24 · v2.0.0
+//
+// v2.0.0 — sửa gốc rễ "cài rồi mà không thấy gì":
+//   * Client Spotify 9.2.x KHÔNG còn gọi /bootstrap và /user-customization-service
+//     trong phiên khởi động nữa. Nó gọi:
+//        /remote-config-resolver/v3/configuration   (AssignedValue)
+//        /nebula/v1/configuration/attributes        (AccountAttribute)
+//     => v1 chỉ bắt 2 endpoint cũ nên patch không bao giờ chạy.
+//   * Thêm dispatcher theo URL + chế độ "strict": chỉ sửa khi nhận ra cấu trúc
+//     thật (có ít nhất 1 field quen), không nhận ra thì trả NULL và để app chạy
+//     nguyên bản. Không bao giờ nhét field lạ vào message lạ.
+// ============================================================================
 //
 // Phần sửa protobuf bên dưới giữ nguyên logic gốc (đã kiểm tra bằng test
 // tests/test-patch.js). Chỉ thêm header tương thích host ở trên cùng.
@@ -660,6 +671,28 @@
     return serialize(out);
   }
 
+  // Strict: chỉ chạy khi buffer đúng layout { 1: entry{ 1: key, 2: value } }
+  // và có ít nhất 1 key mà mình hiểu. Endpoint lạ (nebula / remote-config của
+  // bản client mới) có thể dùng layout khác -> trả null, không đụng gì.
+  function recognizedAttributes(buffer) {
+    const fields = parse(buffer);
+    if (!fields || !fields.length) return 0;
+    let n = 0;
+    for (const f of fields) {
+      if (f.no !== 1 || f.w !== 2) continue;
+      const inner = parse(f.p);
+      if (!inner) continue;
+      const key = text(first(inner, 1));
+      if (key && (has(key) || stripped(key))) n++;
+    }
+    return n;
+  }
+
+  function patchAttributesStrict(buffer) {
+    if (!recognizedAttributes(buffer)) return null;
+    return patchAttributes(buffer);
+  }
+
   // ------------------------------------------------------------ remote config
 
   const boolValue = (on) => (on ? serialize([fieldVarint(1, 1)]) : new Uint8Array(0));
@@ -723,6 +756,28 @@
     return serialize(out);
   }
 
+  // Strict: chỉ chạy khi buffer đúng layout { 3: AssignedValue{1:{1:scope,2:name}} }
+  function recognizedConfiguration(buffer) {
+    const fields = parse(buffer);
+    if (!fields || !fields.length) return 0;
+    let n = 0;
+    for (const f of fields) {
+      if (f.no !== 3 || f.w !== 2) continue;
+      const value = parse(f.p);
+      if (!value) continue;
+      const identifier = first(value, 1);
+      const parts = identifier && identifier.w === 2 ? parse(identifier.p) : null;
+      if (!parts) continue;
+      if (text(first(parts, 1)) !== null && text(first(parts, 2)) !== null) n++;
+    }
+    return n;
+  }
+
+  function patchConfigurationStrict(buffer) {
+    if (!recognizedConfiguration(buffer)) return null;
+    return patchConfiguration(buffer);
+  }
+
   // ---------------------------------------------------------------- response
 
   function patchUcs(buffer) {
@@ -755,16 +810,33 @@
 
   // ------------------------------------------------------------------- entry
 
+  // Thứ tự thử: đúng endpoint trước, rồi mới thử các layout khác.
+  // Mọi hàm patch đều trả null khi không nhận ra -> $done({}) = body nguyên bản.
   let out = null;
-  if (url.indexOf("bootstrap") >= 0) out = patchBootstrap(body) || patchCustomize(body);
-  else out = patchCustomize(body) || patchBootstrap(body);
+  if (url.indexOf("bootstrap") >= 0) {
+    out = patchBootstrap(body) || patchCustomize(body);
+  } else if (url.indexOf("user-customization-service") >= 0) {
+    out = patchCustomize(body) || patchBootstrap(body);
+  } else if (url.indexOf("nebula") >= 0) {
+    // /nebula/v1/configuration/attributes — chuỗi AccountAttribute ở gốc message.
+    out = patchAttributesStrict(body);
+  } else if (url.indexOf("remote-config-resolver") >= 0) {
+    // /remote-config-resolver/v3/configuration — AssignedValue ở gốc message.
+    out = patchConfigurationStrict(body);
+  } else if (url.indexOf("device-capabilities") >= 0) {
+    // Server tính capability theo product của account; client-side không sửa
+    // được an toàn (layout khác), nên để nguyên.
+    out = null;
+  } else {
+    out = patchCustomize(body) || patchBootstrap(body);
+  }
 
   if (!out || same(out, body)) {
-    if (verbose) console.log("spotify: nothing to patch");
+    if (verbose) console.log("spotify-vn: nothing to patch " + url.slice(0, 120));
     $done({});
     return;
   }
 
-  if (verbose) console.log("spotify: " + body.length + " -> " + out.length + " bytes");
+  if (verbose) console.log("spotify-vn: " + body.length + " -> " + out.length + " bytes");
   $done({ body: out });
 })();

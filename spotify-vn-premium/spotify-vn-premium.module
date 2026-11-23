@@ -1,12 +1,12 @@
-#!name=Spotify VN Premium (integrated)
-#!desc=Bỏ ads + mở Premium phía máy (on-demand, skip không giới hạn, bỏ ép shuffle). Patch protobuf bootstrap + user-customization-service; chặn QUIC/UDP và bỏ If-None-Match để patch không bị 304. Không mở được offline/320kbps vì phần đó server quyết.
+#!name=Spotify VN Premium v2
+#!desc=Bỏ ads + mở Premium phía máy (on-demand, skip không giới hạn, bỏ ép shuffle). v2 sửa lỗi MITM không khớp host shard (gae2-spclient...) và bổ sung endpoint mà Spotify 9.2.x thật sự gọi (remote-config-resolver, nebula). Không mở được offline/320kbps vì server quyết.
 #!category=Spotify
-#!author=Script gốc: xzavier-amico / lyc-000001 · đóng gói: Zaka
+#!author=Script gốc: xzavier-amico / lyc-000001 · đóng gói + fix host: Zaka
 #!homepage=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-premium
 #!icon=https://raw.githubusercontent.com/luestr/IconResource/main/App_icon/120px/Spotify.png
 
 [Rule]
-# --- Chặn domain quảng cáo (an toàn, không ảnh hưởng phát nhạc) ---
+# --- 1. Chặn domain quảng cáo (an toàn, không ảnh hưởng phát nhạc) ---
 DOMAIN-SUFFIX,ads.spotify.com,REJECT
 DOMAIN-SUFFIX,adeventtracker.spotify.com,REJECT
 DOMAIN-SUFFIX,aet.spotify.com,REJECT
@@ -18,13 +18,20 @@ DOMAIN-SUFFIX,tpc.googlesyndication.com,REJECT
 DOMAIN-SUFFIX,adservice.google.com,REJECT
 DOMAIN-SUFFIX,www.googletagservices.com,REJECT
 
-# --- Chặn QUIC/UDP của Spotify: HTTP/3 KHÔNG MITM được ---
+# --- 2. Chặn endpoint quảng cáo nằm CHUNG host với API ---
+# Ads của Spotify 9.2.x đi qua chính shard spclient (ads/v3, ad-logic, net-fortune,
+# sponsoredplaylist, premium-marketing) nên chặn theo domain là không ăn.
+# REJECT theo URL: app nhận lỗi kết nối -> coi như "không có ad" và phát tiếp.
+# Nếu thấy nhạc khựng lúc bắt đầu phát, xoá dòng ads/v3 và ad-logic là hết.
+URL-REGEX,^https?://[^/]*spotify\.com/(?:ads/v3|ad-logic|net-fortune|sponsoredplaylist|premium-marketing),REJECT
+
+# --- 3. Chặn QUIC/UDP của Spotify: HTTP/3 KHÔNG MITM được ---
 # Không chặn thì app đi HTTP/3, script không bao giờ chạy => "cài rồi mà không thấy gì".
 AND,((DOMAIN-SUFFIX,spotify.com),(PROTOCOL,UDP)),REJECT
 
 [Script]
-SpotifyVN Request = type=http-request,pattern=^https:\/\/(?:[a-z0-9]+-spclient|spclient\.wg)\.spotify\.com(?::443)?\/(?:bootstrap|user-customization-service),script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-premium/scripts/spotify-request.js,timeout=15
-SpotifyVN Response = type=http-response,pattern=^https:\/\/(?:[a-z0-9]+-spclient|spclient\.wg)\.spotify\.com(?::443)?\/(?:bootstrap|user-customization-service),script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-premium/scripts/spotify-premium.js,requires-body=true,binary-body-mode=true,max-size=8388608,timeout=30
+SpotifyVN Request = type=http-request,pattern=^https:\/\/[a-z0-9.-]*spotify\.com(?::443)?\/(?:bootstrap|user-customization-service|nebula|remote-config-resolver),script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-premium/scripts/spotify-request.js,timeout=15
+SpotifyVN Response = type=http-response,pattern=^https:\/\/[a-z0-9.-]*spotify\.com(?::443)?\/(?:bootstrap|user-customization-service|nebula|remote-config-resolver),script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-premium/scripts/spotify-premium.js,requires-body=true,binary-body-mode=true,max-size=8388608,timeout=30
 
 [MITM]
-hostname = %APPEND% *-spclient.spotify.com, spclient.wg.spotify.com
+hostname = %APPEND% *.spotify.com, spotify.com

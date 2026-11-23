@@ -23,9 +23,11 @@
   var url = ($request && $request.url) || "";
   var headers = ($request && $request.headers) || {};
 
-  // Chỉ xử lý đúng 2 endpoint mà script response sẽ patch.
+  // Chỉ xử lý đúng các endpoint mà script response sẽ patch.
+  // v2.0.0: bắt theo path, host nào của spotify.com cũng được — client mới
+  // gọi qua shard (gae2-spclient.spotify.com), không phải spclient.wg nữa.
   var isTarget =
-    /(?:^https:\/\/)(?:[a-z0-9]+-spclient|spclient\.wg)\.spotify\.com(?::443)?\/(?:bootstrap|user-customization-service)/i.test(
+    /^https:\/\/[a-z0-9.-]*spotify\.com(?::443)?\/(?:bootstrap|user-customization-service|nebula|remote-config-resolver)/i.test(
       url
     );
 

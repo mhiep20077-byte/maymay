@@ -7,7 +7,7 @@ Module **Shadowrocket (小火箭)** gộp: bỏ quảng cáo + mở khoá Premiu
 > (script còn sống, chạy được) + phần chống 304 / chặn HTTP/3 mà bản đó thiếu.
 > Logic patch giữ nguyên gốc — tao chỉ thêm phần hạ tầng và test để biết nó thật sự chạy.
 
-![test](https://img.shields.io/badge/test-23%2F23%20pass-brightgreen)
+![test](https://img.shields.io/badge/test-30%2F30%20pass-brightgreen)
 
 ---
 
@@ -15,7 +15,7 @@ Module **Shadowrocket (小火箭)** gộp: bỏ quảng cáo + mở khoá Premiu
 
 ```
 bash tools/test.sh
-→ PASS: 23    FAIL: 0
+→ PASS: 30    FAIL: 0
 ```
 
 Test dựng protobuf giả đúng layout thật của Spotify rồi decode kết quả ra so từng field, gồm:
@@ -28,6 +28,12 @@ Test dựng protobuf giả đúng layout thật của Spotify rồi decode kết
 - script chạy được cả khi host **không có `TextEncoder`** (đúng kiểu Shadowrocket)
 - module: `script-path` trỏ đúng file, regex hợp lệ, có rule chặn UDP
 
+### v2.0.0 — sửa lỗi "cài rồi mà không thấy gì"
+Bản 9.2.x không còn gọi `bootstrap`: 91% API đi qua shard `gae2-spclient.spotify.com`, endpoint thật là
+`nebula/v1/configuration/attributes` + `remote-config-resolver/v3/configuration`.
+v1 vừa dùng wildcard MITM sai (`*-spclient…`) vừa nhắm sai endpoint → patch không chạy byte nào.
+v2 sửa cả hai + thêm rule chặn quảng cáo theo URL. Đọc `docs/CHAN-DOAN-V2.md` trước khi test.
+
 Cái này **không** thay được test trên máy thật — xem `docs/HUONG-DAN-VN.md`.
 
 ---
@@ -37,18 +43,21 @@ Cái này **không** thay được test trên máy thật — xem `docs/HUONG-DA
 ```
 spotify-vn-premium/
 ├── spotify-vn-premium.module     # module chính (dán URL này vào Shadowrocket)
+├── spotify-vn-premium-DEBUG.module  # module chẩn đoán: chỉ in log, không sửa gì
 ├── scripts/
-│   ├── spotify-premium.js        # http-response: patch protobuf bootstrap + UCS
-│   └── spotify-request.js        # http-request: bỏ If-None-Match, ép no-cache
+│   ├── spotify-premium.js        # http-response: patch nebula / remote-config / bootstrap / UCS
+│   ├── spotify-request.js        # http-request: bỏ If-None-Match, ép no-cache
+│   └── debug.js                  # in log từng response MITM bắt được
 ├── optional/
 │   ├── spotify-ipad.module       # TÙY CHỌN: trick platform=ipad (list track đầy đủ)
 │   └── spotify-ipad.js
 ├── tools/
 │   ├── set-repo.sh               # trỏ module về repo GitHub của mày
 │   └── test.sh
-├── tests/test-patch.js           # 23 test offline
+├── tests/test-patch.js           # 30 test offline
 ├── docs/
 │   ├── HUONG-DAN-VN.md           # test trên máy thật ở VN, checklist từng bước
+│   ├── CHAN-DOAN-V2.md           # vì sao v1 không chạy + bằng chứng từ log thật + giới hạn
 │   └── KY-THUAT.md               # patch cái gì, tại sao, khi Spotify đổi thì sửa ở đâu
 ├── README.md
 ├── CHANGELOG.md
@@ -65,7 +74,7 @@ cd spotify-vn-premium
 # 1) trỏ module về repo của mày (thay user/repo/branch)
 bash tools/set-repo.sh <github-user> <repo> main
 
-# 2) test lại cho chắc (vẫn 23/23)
+# 2) test lại cho chắc (vẫn 30/30)
 bash tools/test.sh
 
 # 3) tạo repo trên GitHub rồi push

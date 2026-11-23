@@ -11,6 +11,27 @@ Chuẩn bị:
 
 ---
 
+## Bước -1 (v2) — Nếu đã cài bản cũ mà "không thấy gì"
+
+Bản v1 không chạy được trên Spotify 9.2.x. Nguyên nhân + bằng chứng: `docs/CHAN-DOAN-V2.md`.
+Tóm tắt: MITM dùng `*-spclient.spotify.com` (wildcard giữa nhãn → không khớp host nào) và script
+chỉ patch `bootstrap` (client mới không gọi nữa).
+
+Làm theo thứ tự:
+
+1. **Xác nhận MITM có ăn không** — cài `spotify-vn-premium-DEBUG.module`, bật MITM, kill Spotify, mở lại, vào 1 artist.
+   Mở Shadowrocket → Log, lọc `spot-vn-dbg`.
+   - Không có dòng nào → MITM chưa ăn (sai cert / module OFF / Private Relay) → chưa cần sửa script.
+   - Có dòng `200 … /nebula/…` → MITM ok, sang bước 2.
+2. Gỡ module DEBUG, cài `spotify-vn-premium.module` (bản v2).
+3. Kill Spotify (vuốt khỏi app switcher), mở lại, đợi 10 giây, rồi kiểm tra checklist bước 0.
+4. Log phải có dòng `[spotify-vn] … -> … bytes` khi mở app / mở artist.
+
+Nếu v2 vẫn chưa đủ: gửi lại các dòng `spot-vn-dbg` của `nebula`, `remote-config-resolver`,
+`device-capabilities`. Có status + size + 12 byte đầu là đủ để sửa đúng field.
+
+---
+
 ## Bước 0 — Trước khi cài: ghi lại "trạng thái free" để so
 
 Trước khi bật module, làm đúng mấy việc này và **chụp màn hình**:

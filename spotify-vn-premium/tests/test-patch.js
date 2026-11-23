@@ -415,11 +415,128 @@ test("module chặn QUIC/UDP cho spotify.com", () => {
   assert.ok(/PROTOCOL,UDP/.test(fs.readFileSync(MODULE_FILE, "utf8")), "thiếu rule chặn UDP");
 });
 
-test("module chỉ patch 2 endpoint (không đụng metadata/lyrics)", () => {
+test("module patch đúng endpoint của client mới, không đụng metadata/lyrics", () => {
   const mod = fs.readFileSync(MODULE_FILE, "utf8");
   const resp = mod.split("\n").find((l) => l.startsWith("SpotifyVN Response"));
-  assert.ok(resp.includes("bootstrap|user-customization-service"));
-  assert.ok(!resp.includes("metadata"), "pattern response lan sang metadata");
+  assert.ok(resp.includes("bootstrap|user-customization-service"), "mất endpoint cũ");
+  assert.ok(resp.includes("nebula"), "thiếu nebula (client 9.2.x dùng cái này)");
+  assert.ok(resp.includes("remote-config-resolver"), "thiếu remote-config-resolver");
+  assert.ok(!/metadata|lyrics|chroma/.test(resp), "pattern response lan sang metadata/lyrics");
+});
+
+test("MITM hostname dùng wildcard hợp lệ (không dùng *-spclient)", () => {
+  const mod = fs.readFileSync(MODULE_FILE, "utf8");
+  const line = mod.split("\n").find((l) => l.startsWith("hostname"));
+  assert.ok(line, "thiếu dòng hostname");
+  // Shadowrocket/Surge chỉ hiểu wildcard ở ĐẦU nhãn: *.spotify.com.
+  // "*-spclient.spotify.com" KHÔNG khớp host nào => MITM im lặng => patch không chạy.
+  assert.ok(!/\*-/.test(line), "vẫn còn wildcard giữa nhãn: " + line);
+  assert.ok(line.includes("*.spotify.com"), "thiếu *.spotify.com");
+  assert.ok(line.includes("%APPEND%"), "thiếu %APPEND% (xoá sạch list cũ của app)");
+});
+
+test("pattern trong module khớp đúng URL thật lấy từ log (shard gae2)", () => {
+  const mod = fs.readFileSync(MODULE_FILE, "utf8");
+  const pats = [...mod.matchAll(/pattern=(\S+?),script-path=/g)].map((m) => new RegExp(m[1]));
+  assert.ok(pats.length === 2, "phải có 2 script (request + response)");
+  const real = [
+    "https://gae2-spclient.spotify.com/remote-config-resolver/v3/configuration",
+    "https://gae2-spclient.spotify.com/nebula/v1/configuration/attributes",
+    "https://spclient.wg.spotify.com/bootstrap/v1/bootstrap",
+    "https://gae2-spclient.spotify.com/user-customization-service/v1/customize",
+  ];
+  for (const u of real) for (const re of pats) assert.ok(re.test(u), "không khớp: " + u);
+  const notOurs = [
+    "https://gae2-spclient.spotify.com/playplay/v1/key/abc",
+    "https://spclient.wg.spotify.com/metadata/4/track/abc",
+    "https://audio-ak-spotify-com.akamaized.net/x",
+  ];
+  for (const u of notOurs) for (const re of pats) assert.ok(!re.test(u), "bắt nhầm: " + u);
+});
+
+console.log("\n[6] v2 — endpoint mới của Spotify 9.2.x\n");
+
+const URL_NEBULA = "https://gae2-spclient.spotify.com/nebula/v1/configuration/attributes";
+const URL_RC = "https://gae2-spclient.spotify.com/remote-config-resolver/v3/configuration";
+
+test("nebula: attributes ở gốc message -> catalogue/type = premium", () => {
+  const body = cat(
+    attr("catalogue", "free"),
+    attr("type", "free"),
+    attr("payment-state", "ok"),
+    attr("khong-lien-quan", "giu-nguyen")
+  );
+  const out = runResponse(body, URL_NEBULA);
+  assert.ok(out && out.body, "không patch nebula");
+  const map = {};
+  for (const e of pick(decode(Buffer.from(out.body)), 1)) {
+    const inner = decode(e.p);
+    const key = one(inner, 1).p.toString("utf8");
+    const val = decode(one(inner, 2).p);
+    const b = one(val, 2);
+    const s = one(val, 4);
+    map[key] = b ? b.v === 1 : s ? s.p.toString("utf8") : null;
+  }
+  assert.strictEqual(map.catalogue, "premium");
+  assert.strictEqual(map.type, "premium");
+  assert.ok(!("payment-state" in map), "payment-state chưa bị xoá");
+  assert.strictEqual(map["khong-lien-quan"], "giu-nguyen");
+});
+
+test("remote-config: AssignedValue ở gốc -> rule free bị xoá, crossfade bật", () => {
+  // Layout thật: ResolveConfiguration { 3: AssignedValue { 1:{1:scope,2:name}, 3:BoolValue } }
+  const av = (scope, name, val) => {
+    const ident = fBytes(1, cat(fStr(1, scope), fStr(2, name)));
+    return fBytes(3, cat(ident, val ? fBytes(3, val) : Buffer.alloc(0)));
+  };
+  const body = cat(
+    av("ios-feature-settings", "crossfade_enabled", boolOff),
+    av("", "enable_ads", boolOff),
+    av("", "enable_free_on_demand_experiment", boolOff),
+    fVarint(7, 99)
+  );
+  const out = runResponse(body, URL_RC);
+  assert.ok(out && out.body, "không patch remote-config");
+  const cfg = {};
+  for (const e of pick(decode(Buffer.from(out.body)), 3)) {
+    const f = decode(e.p);
+    const ident = decode(one(f, 1).p);
+    const scope = one(ident, 1).p.toString("utf8");
+    const name = one(ident, 2).p.toString("utf8");
+    cfg[(scope || "") + "|" + name] = one(f, 3);
+  }
+  assert.ok(cfg["ios-feature-settings|crossfade_enabled"], "crossfade không được set");
+  // enable_ads: có trong message -> rule "set-if-present" ghi thành false (value rỗng)
+  assert.ok(cfg["|enable_ads"], "enable_ads mất khỏi message");
+  assert.strictEqual(cfg["|enable_ads"].p.length, 0, "enable_ads chưa bị tắt");
+  assert.ok(!("|enable_free_on_demand_experiment" in cfg), "rule free on-demand chưa bị xoá");
+  assert.strictEqual(one(decode(Buffer.from(out.body)), 7).v, 99, "field lạ 7 mất");
+});
+
+test("nebula lạ layout -> KHÔNG sửa (guard strict)", () => {
+  const body = cat(fBytes(1, cat(fStr(1, "abc"), fBytes(2, fBytes(2, fVarint(1, 1))))));
+  const out = runResponse(body, URL_NEBULA.replace("attributes", "other"));
+  assert.ok(!out || !out.body, "đã sửa bừa một message lạ");
+});
+
+test("remote-config lạ layout -> KHÔNG sửa (guard strict)", () => {
+  const body = cat(fBytes(3, fStr(1, "not-an-identifier")));
+  const out = runResponse(body, URL_RC);
+  assert.ok(!out || !out.body, "đã sửa bừa message lạ");
+});
+
+console.log("\n[7] Module DEBUG\n");
+
+test("module DEBUG + debug.js tồn tại, script-path trỏ đúng file", () => {
+  const p = path.join(ROOT, "spotify-vn-premium-DEBUG.module");
+  assert.ok(fs.existsSync(p), "thiếu module debug");
+  const mod = fs.readFileSync(p, "utf8");
+  const sp = mod
+    .match(/script-path=([^,\n]+)/)[1]
+    .replace(/^__RAW_BASE__\//, "")
+    .replace(/^https?:\/\/[^/]+\//, "");
+  assert.ok(fs.existsSync(path.join(ROOT, sp)), "debug.js không tồn tại: " + sp);
+  assert.ok(fs.statSync(path.join(ROOT, sp)).size > 0);
 });
 
 console.log("\n" + "-".repeat(62));
