@@ -1,0 +1,12 @@
+#!name=Spotify VN — iPad trick (optional)
+#!desc=TÙY CHỌN. Đổi platform=iphone -> ipad để album/artist trả danh sách track đầy đủ. Chỉ bật nếu module chính đã chạy mà list track vẫn bị rút gọn.
+#!category=Spotify
+#!author=đóng gói: Zaka
+#!homepage=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-premium
+#!icon=https://raw.githubusercontent.com/luestr/IconResource/main/App_icon/120px/Spotify.png
+
+[Script]
+SpotifyVN iPad = type=http-request,pattern=^https:\/\/api(?:-partner)?\.spotify\.com\/(?:v1\/)?(?:artists|albums|playlists),script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-premium/optional/spotify-ipad.js,timeout=15
+
+[MITM]
+hostname = %APPEND% api.spotify.com, api-partner.spotify.com

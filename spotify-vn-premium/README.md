@@ -1,0 +1,164 @@
+# spotify-vn-premium
+
+Module **Shadowrocket (小火箭)** gộp: bỏ quảng cáo + mở khoá Premium **phía máy** cho Spotify,
+đóng gói để chạy ổn định trên mạng VN (chặn QUIC, chống 304, patch protobuf tại chỗ).
+
+> Đây là bản **tích hợp** từ 2 nguồn: script rewrite protobuf của `xzavier-amico` / `lyc-000001`
+> (script còn sống, chạy được) + phần chống 304 / chặn HTTP/3 mà bản đó thiếu.
+> Logic patch giữ nguyên gốc — tao chỉ thêm phần hạ tầng và test để biết nó thật sự chạy.
+
+![test](https://img.shields.io/badge/test-23%2F23%20pass-brightgreen)
+
+---
+
+## 1. Kết quả kiểm tra (offline, không cần Spotify)
+
+```
+bash tools/test.sh
+→ PASS: 23    FAIL: 0
+```
+
+Test dựng protobuf giả đúng layout thật của Spotify rồi decode kết quả ra so từng field, gồm:
+
+- `catalogue` / `type` / `player-license` → `premium`
+- `ads` → `false`, `payment-state` bị xoá (đây là field làm app "rớt về free")
+- remote config: bật crossfade/automix, xoá rule ad & free on-demand
+- field lạ và thứ tự field còn nguyên (không làm app nhảy bài)
+- 304 / body rác / body cụt → **không** trả body hỏng (bỏ qua an toàn)
+- script chạy được cả khi host **không có `TextEncoder`** (đúng kiểu Shadowrocket)
+- module: `script-path` trỏ đúng file, regex hợp lệ, có rule chặn UDP
+
+Cái này **không** thay được test trên máy thật — xem `docs/HUONG-DAN-VN.md`.
+
+---
+
+## 2. Cấu trúc
+
+```
+spotify-vn-premium/
+├── spotify-vn-premium.module     # module chính (dán URL này vào Shadowrocket)
+├── scripts/
+│   ├── spotify-premium.js        # http-response: patch protobuf bootstrap + UCS
+│   └── spotify-request.js        # http-request: bỏ If-None-Match, ép no-cache
+├── optional/
+│   ├── spotify-ipad.module       # TÙY CHỌN: trick platform=ipad (list track đầy đủ)
+│   └── spotify-ipad.js
+├── tools/
+│   ├── set-repo.sh               # trỏ module về repo GitHub của mày
+│   └── test.sh
+├── tests/test-patch.js           # 23 test offline
+├── docs/
+│   ├── HUONG-DAN-VN.md           # test trên máy thật ở VN, checklist từng bước
+│   └── KY-THUAT.md               # patch cái gì, tại sao, khi Spotify đổi thì sửa ở đâu
+├── README.md
+├── CHANGELOG.md
+└── CREDITS.md
+```
+
+---
+
+## 3. Push lên git + cài (5 bước)
+
+```bash
+cd spotify-vn-premium
+
+# 1) trỏ module về repo của mày (thay user/repo/branch)
+bash tools/set-repo.sh <github-user> <repo> main
+
+# 2) test lại cho chắc (vẫn 23/23)
+bash tools/test.sh
+
+# 3) tạo repo trên GitHub rồi push
+git init
+git add -A
+git commit -m "spotify vn premium module"
+git branch -M main
+git remote add origin https://github.com/<github-user>/<repo>.git
+git push -u origin main
+```
+
+4) Lấy URL in ra ở bước 1, dạng:
+
+```
+https://raw.githubusercontent.com/<user>/<repo>/main/spotify-vn-premium.module
+```
+
+5) Trên iPhone: **Shadowrocket → Cấu hình → Module → dấu + → dán URL → tải về → bật module**.
+
+> Repo **private** thì raw URL không tải được. Để public, hoặc dùng jsDelivr / Gist raw.
+> Không có bash/Node trên máy? Mở `spotify-vn-premium.module` bằng text editor, thay **tất cả**
+> `__RAW_BASE__` bằng base URL của mày (dạng `https://raw.githubusercontent.com/user/repo/main`).
+
+---
+
+## 4. Trước khi nó chạy, phải có 3 thứ
+
+| # | Việc | Ở đâu |
+|---|---|---|
+| 1 | Module ở trạng thái **ON** | Shadowrocket → Module |
+| 2 | **MITM** bật + hostname có `*-spclient.spotify.com`, `spclient.wg.spotify.com` | module tự `%APPEND%`, nhưng kiểm tra lại ở trang chủ app |
+| 3 | **Certificate** đã cài + **Trust** trong iOS | Cài đặt → Cài đặt chung → Giới thiệu → Cài đặt chứng chỉ → Trust Settings |
+
+Thiếu 1 trong 3 → module "cài rồi mà không có gì xảy ra". Đây là lỗi số 1 của mọi người.
+
+Xong thì **kill Spotify** (vuốt khỏi app switcher), mở lại. Module chỉ có tác dụng từ lần
+request đầu tiên sau khi mở app.
+
+---
+
+## 5. Được gì / không được gì
+
+| Tính năng | Kết quả | Ghi chú |
+|---|---|---|
+| Bỏ ads audio + banner | ✅ | ads còn lại thì do cache, kill app |
+| Skip không giới hạn | ✅ | acc free bị giới hạn 6 skip/giờ → patch bỏ |
+| Chọn bài tuỳ ý (on-demand) | ✅ | hết bị ép shuffle |
+| Bỏ ép shuffle khi bấm play playlist | ✅ | |
+| Crossfade / automix | ✅ | bật trong remote config |
+| Danh sách track album/artist đầy đủ | ⚠️ | tuỳ build; thử `optional/spotify-ipad.module` |
+| **Tải offline** | ❌ | server quyết, client không với tới |
+| **320 kbps / Very High** | ❌ | server cấp theo tier → **đừng set Very High**, set xong có bài không phát được |
+| Premium thật (web, máy khác, account page) | ❌ | chỉ máy này, chỉ app này |
+| Lyrics, podcast, mọi thứ khác | giữ nguyên | module không đụng endpoint khác |
+
+Nói thẳng: **đây không phải Premium thật**. Nó lừa app ở tầng protobuf. Spotify đổi schema
+hoặc bật kiểm tra server-side là tắt. Dùng cá nhân, đừng mua bán key/module.
+
+---
+
+## 6. Vì sao bản này khác bản cũ
+
+| Vấn đề của module cũ | Bản này |
+|---|---|
+| Không chặn QUIC → app đi HTTP/3 → **MITM không thấy gì** | `[Rule]` chặn `PROTOCOL,UDP` cho `spotify.com` |
+| Server trả **304** → không có body → script bỏ qua → "lúc được lúc không" | `http-request` script xoá `If-None-Match` / `If-Modified-Since` |
+| Response bị gzip → protobuf không đọc được | ép `Accept-Encoding: identity` |
+| Body vào qua `bodyBytes` thay vì `body` | đã normalize trong script |
+| Thiếu `TextEncoder` → script chết ngay dòng đầu | polyfill UTF-8 trong script |
+| `max-size` 4 MB, body lớn bị cắt | nâng 8 MB |
+
+---
+
+## 7. Sửa nhanh khi không ăn
+
+| Triệu chứng | Kiểm tra |
+|---|---|
+| Không có gì thay đổi | Module ON? MITM ON? Cert đã Trust? Đã kill app? |
+| Ads vẫn còn | Nghe 3 bài liên tiếp xem còn ads audio không; xoá app cache bằng cách kill app |
+| Vẫn bị giới hạn skip | Mở **Settings → xem tài khoản**: nếu vẫn hiện Free thì bình thường, kiểm tra lại log script |
+| Muốn biết script có chạy | Shadowrocket → Log / Script log, tìm `[spotify-vn]` |
+| Bài bị nhảy giữa chừng | Thường do set Very High; hạ về Automatic |
+| Spotify **không load / không phát được gì** sau khi bật module | Mở module, tạm xoá dòng `SpotifyVN Request` trong `[Script]` → nếu hết lỗi thì host không nhận sửa header; báo tao để đổi cách |
+| Toàn bộ im lặng sau khi Spotify update | Spotify đổi schema → xem `docs/KY-THUAT.md` |
+
+**Tắt khẩn cấp:** chỉ cần tắt module trong Shadowrocket là app về bình thường ngay,
+không có gì bị ghi vào máy, không cần xoá cert.
+
+---
+
+## 8. Credit
+
+- Logic rewrite protobuf gốc: **xzavier-amico** (plugin Loon) — build Shadowrocket: **lyc-000001**
+- Đóng gói, phần chống 304/QUIC, test: repo này
+
+Xem `CREDITS.md`. Dùng cho mục đích cá nhân.
