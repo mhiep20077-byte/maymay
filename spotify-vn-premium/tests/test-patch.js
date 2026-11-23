@@ -525,6 +525,132 @@ test("remote-config lạ layout -> KHÔNG sửa (guard strict)", () => {
   assert.ok(!out || !out.body, "đã sửa bừa message lạ");
 });
 
+console.log("\n[8] v2.1 — product state quét cấu trúc (trang Tài khoản)\n");
+
+const URL_PS = "https://gae2-spclient.spotify.com/product-state/v1/product_state";
+const URL_PROFILE = "https://gae2-spclient.spotify.com/user-profile-view/v1/user";
+const URL_LOGIN5 = "https://login5.spotify.com/v3/login";
+
+test("JSON: product=free -> premium (product-state)", () => {
+  const body = Buffer.from(JSON.stringify({ product: "free", type: "free", country: "VN", id: "x" }));
+  const out = runResponse(body, URL_PS);
+  assert.ok(out && out.body, "không patch JSON product-state");
+  const obj = JSON.parse(Buffer.from(out.body).toString("utf8"));
+  assert.strictEqual(obj.product, "premium", "product chưa đổi");
+  assert.strictEqual(obj.type, "premium", "type chưa đổi");
+  assert.strictEqual(obj.country, "VN", "field không liên quan bị sửa");
+  assert.strictEqual(obj.id, "x", "field không liên quan bị sửa");
+});
+
+test("JSON: isPremium=false -> true", () => {
+  const body = Buffer.from(JSON.stringify({ account: { isPremium: false, is_premium: false } }));
+  const out = runResponse(body, URL_PROFILE);
+  assert.ok(out && out.body, "không patch JSON isPremium");
+  const obj = JSON.parse(Buffer.from(out.body).toString("utf8"));
+  assert.strictEqual(obj.account.isPremium, true);
+  assert.strictEqual(obj.account.is_premium, true);
+});
+
+test("JSON: plan/subscription/tier = free -> premium", () => {
+  const body = Buffer.from(
+    JSON.stringify({ plan: "free", subscription: "Free", tier: "FREE", catalogue: "free" })
+  );
+  const out = runResponse(body, URL_PROFILE);
+  assert.ok(out && out.body);
+  const obj = JSON.parse(Buffer.from(out.body).toString("utf8"));
+  assert.strictEqual(obj.plan, "premium");
+  assert.strictEqual(obj.subscription, "Premium");
+  assert.strictEqual(obj.tier, "PREMIUM");
+  assert.strictEqual(obj.catalogue, "premium");
+});
+
+test("JSON: ads=true -> false, không đụng chuỗi 'free' nằm ngoài key product", () => {
+  const body = Buffer.from(
+    JSON.stringify({ ads: true, product: "free", description: "free trial", name: "free" })
+  );
+  const out = runResponse(body, URL_PROFILE);
+  const obj = JSON.parse(Buffer.from(out.body).toString("utf8"));
+  assert.strictEqual(obj.ads, false, "ads chưa tắt");
+  assert.strictEqual(obj.product, "premium");
+  assert.strictEqual(obj.description, "free trial", "sửa bừa chuỗi ngoài key product");
+  assert.strictEqual(obj.name, "free", "sửa bừa name");
+});
+
+test("JSON không có gì để sửa -> trả body nguyên, không re-encode", () => {
+  const raw = '{ "a" : 1,   "b" : "ok" }';
+  const out = runResponse(Buffer.from(raw), URL_PROFILE);
+  assert.ok(!out || !out.body, "đã re-encode JSON không cần thiết");
+});
+
+test("protobuf: string 'free' -> 'premium' (độ dài đổi, length prefix đúng)", () => {
+  const body = cat(fVarint(1, 2), fStr(2, "free"), fStr(3, "VN"), fStr(4, "giu-nguyen"));
+  const out = runResponse(body, URL_PS);
+  assert.ok(out && out.body, "không patch protobuf string");
+  const d = decode(Buffer.from(out.body));
+  assert.strictEqual(one(d, 1).v, 2, "field varint bị đụng");
+  assert.strictEqual(one(d, 2).p.toString("utf8"), "premium", "string free chưa đổi");
+  assert.strictEqual(one(d, 3).p.toString("utf8"), "VN", "field khác bị sửa");
+  assert.strictEqual(one(d, 4).p.toString("utf8"), "giu-nguyen", "field khác bị sửa");
+});
+
+test("protobuf: FREE/Free đổi giữ đúng kiểu chữ hoa", () => {
+  const body = cat(fStr(2, "FREE"), fStr(3, "Free"));
+  const out = runResponse(body, URL_PS);
+  const d = decode(Buffer.from(out.body));
+  assert.strictEqual(one(d, 2).p.toString("utf8"), "PREMIUM");
+  assert.strictEqual(one(d, 3).p.toString("utf8"), "Premium");
+});
+
+test("protobuf: token/base64 dài không bị đụng", () => {
+  const token = "A".repeat(200) + "free"; // base64 dài, có chữ free bên trong
+  const body = cat(fStr(1, token), fStr(2, "free"));
+  const out = runResponse(body, URL_LOGIN5);
+  const d = decode(Buffer.from(out.body));
+  assert.strictEqual(one(d, 1).p.toString("utf8"), token, "đã sửa token");
+  assert.strictEqual(one(d, 2).p.toString("utf8"), "premium");
+});
+
+test("protobuf lồng nhiều tầng: string free sâu bên trong vẫn đổi", () => {
+  const inner = cat(fStr(1, "catalogue"), fStr(2, "free"));
+  const body = cat(fStr(1, "root"), fBytes(5, fBytes(6, fBytes(7, inner))));
+  const out = runResponse(body, URL_PROFILE);
+  const d = decode(Buffer.from(out.body));
+  const l5 = decode(one(d, 5).p);
+  const l6 = decode(one(l5, 6).p);
+  const l7 = decode(one(l6, 7).p);
+  assert.strictEqual(one(l7, 2).p.toString("utf8"), "premium", "string sâu chưa đổi");
+});
+
+test("binary lạ (không JSON, không protobuf) -> không crash, trả nguyên", () => {
+  const body = Buffer.from([0xff, 0x00, 0x13, 0x37, 0x66, 0x72, 0x65, 0x65]);
+  const out = runResponse(body, URL_PS);
+  assert.ok(!out || !out.body, "đã trả body hỏng");
+});
+
+test("endpoint media (playplay/storage-resolve) -> script bỏ qua ngay", () => {
+  const body = Buffer.from(JSON.stringify({ product: "free" }));
+  const out = runResponse(body, "https://gae2-spclient.spotify.com/playplay/v1/key/abc");
+  assert.ok(!out || !out.body, "script vẫn chạy trên endpoint media");
+});
+
+test("module pattern khớp endpoint product-state / user-profile / login5", () => {
+  const mod = fs.readFileSync(MODULE_FILE, "utf8");
+  // lấy pattern của script response, bỏ escape về regex JS
+  const raw = mod.match(/type=http-response,pattern=([^,]+)/)[1];
+  const re = new RegExp(raw, "i");
+  const urls = [
+    "https://gae2-spclient.spotify.com/product-state/v1/product_state",
+    "https://gew1-spclient.spotify.com/user-profile-view/v1/user",
+    "https://login5.spotify.com/v3/login",
+    "https://gae2-spclient.spotify.com/device-capabilities/v1/capabilities",
+    "https://spclient.wg.spotify.com/bootstrap/v1/bootstrap",
+    "https://gae2-spclient.spotify.com/nebula/v1/configuration/attributes",
+    "https://gae2-spclient.spotify.com/remote-config-resolver/v3/configuration"
+  ];
+  for (const u of urls) assert.ok(re.test(u), "pattern không khớp: " + u);
+  assert.ok(!re.test("https://gae2-spclient.spotify.com/playplay/v1/key/abc"), "pattern bắt nhầm playplay");
+});
+
 console.log("\n[7] Module DEBUG\n");
 
 test("module DEBUG + debug.js tồn tại, script-path trỏ đúng file", () => {
@@ -534,7 +660,8 @@ test("module DEBUG + debug.js tồn tại, script-path trỏ đúng file", () =>
   const sp = mod
     .match(/script-path=([^,\n]+)/)[1]
     .replace(/^__RAW_BASE__\//, "")
-    .replace(/^https?:\/\/[^/]+\//, "");
+    // sau set-repo thì script-path là URL thật (raw.githubusercontent.com/<user>/<repo>/<branch>/scripts/...)
+    .replace(/^https?:\/\/.+\/(scripts|optional)\//, "$1/");
   assert.ok(fs.existsSync(path.join(ROOT, sp)), "debug.js không tồn tại: " + sp);
   assert.ok(fs.statSync(path.join(ROOT, sp)).size > 0);
 });

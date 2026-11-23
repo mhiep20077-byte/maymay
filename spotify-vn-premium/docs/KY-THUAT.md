@@ -98,6 +98,41 @@ skip do app đếm. Cái gì server đếm thì thua.
 
 ---
 
+## 5b. Product state (v2.1) — vì sao quét cấu trúc thay vì field number
+
+Tên gói hiển thị ("Gói của bạn: Spotify Free"), badge Premium ở trang chất lượng nhạc,
+trạng thái nút **Tải xuống** / **Phối** — tất cả đọc từ **product state**, không phải từ
+`nebula` hay `remote-config`. Đó là lý do v2 bỏ được ads mà UI vẫn hiện Free.
+
+Product state trả về qua **nhiều endpoint**, tên field đổi giữa các bản client và **không có
+schema công khai**. v1 đoán field number → sai → "cài rồi không thấy gì".
+
+v2.1 nên đọc bằng cấu trúc:
+
+```
+patchUniversal(buffer)
+├── body[0] == '{' hoặc '['  →  JSON
+│   └── walk(): key ∈ PRODUCT_KEY && value ∈ FREE_MAP   → đổi
+│              key ∈ PREMIUM_FLAG_KEY && value === false → true
+│              key ∈ AD_FLAG_KEY      && value === true  → false
+└── ngược lại → parse protobuf, rewriteStrings(fields, depth)
+    └── field LEN, len ≤ 64 → decode UTF-8 → value ∈ FREE_MAP ? đổi
+    └── field LEN, parse được thành message con → đệ quy (depth ≤ 8)
+    └── wire-type 0 (varint/enum) → KHÔNG đụng
+```
+
+Hai rào bảo vệ quan trọng:
+
+1. **len > 64 byte → bỏ qua**: đây là `access_token`, JWT, base64, hash. Sửa chúng = app logout.
+2. **varint không sửa**: `product = 1` (FREE) / `2` (PREMIUM) là enum. Sửa bừa ở message sai
+   layout sẽ làm client hiểu sai state → nhảy bài, crash.
+
+Khi Spotify đổi tên field: thêm tên mới vào `PRODUCT_KEY` / `FREE_MAP` trong
+`scripts/spotify-premium.js`. Không cần biết field number.
+
+Một lưu ý vận hành: `SPTProductState` được **cache xuống keychain/plist**. Patch đúng vẫn có thể
+chưa thấy đổi cho tới khi app đăng xuất/đăng nhập lại. Xem `docs/FIX-PRODUCT-STATE.md`.
+
 ## 6. Khi Spotify update làm module chết
 
 Thứ tự kiểm tra:

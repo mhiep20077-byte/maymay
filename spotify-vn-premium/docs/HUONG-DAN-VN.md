@@ -107,6 +107,54 @@ Thử mấy cái này, nếu nó **không** hoạt động thì module đang đ�
 
 ---
 
+---
+
+## Bước 4b (v2.1) — Vẫn hiện "Gói của bạn: Spotify Free" / còn badge Premium / nút Phối bị khoá
+
+3 thứ này **không** đọc từ 4 endpoint mà v2 patch. Chúng đọc từ **product state**.
+v2.1 mới xử lý (xem `docs/FIX-PRODUCT-STATE.md` để hiểu tại sao không hard-code field number).
+
+Làm đúng thứ tự sau, **dừng ở bước nào có kết quả**:
+
+### 4b.1 — Xem MITM có thật sự bắt được endpoint đó (không đoán)
+1. Gỡ module chính, thêm `spotify-vn-premium-DEBUG.module`.
+2. Vuốt tắt hẳn Spotify rồi mở lại → vào **Cài đặt → Tài khoản**.
+3. Shadowrocket → tab **Log** → lọc `spot-vn-dbg`.
+
+Đọc kết quả:
+
+| Log thấy gì | Nghĩa là |
+|---|---|
+| Không có dòng nào | cert chưa Trust / Private Relay bật / module chưa ON — chưa cần sửa script |
+| Có `200 … proto /user-profile-view/…` | MITM ăn, endpoint trả protobuf |
+| Có `200 … json HAS_FREE /product-state/…` | **đây là endpoint trả `free`** — gửi 3–5 dòng đó |
+
+`HAS_FREE` chỉ xuất hiện ở response có chữ `free` → nhìn đúng nó là biết cần soi chỗ nào.
+
+### 4b.2 — Ép app lấy lại product state
+`SPTProductState` được **cache trong keychain/plist**. App mở lại chỉ vẽ từ cache,
+không gọi lại endpoint → patch có đúng cũng không thấy đổi.
+
+Spotify → Cài đặt → **Đăng xuất** → đăng nhập lại.
+Đăng nhập lại bắt buộc đi qua `login5` + `product-state` → patch chạy trên đường đó.
+
+Không mất playlist (playlist nằm ở server). Chỉ mất dữ liệu offline tải sẵn.
+
+### 4b.3 — Vẫn Free thì xoá cache triệt để
+Gỡ hẳn Spotify rồi cài lại từ App Store. Cách này chắc nhất, nhưng mất dữ liệu offline.
+
+### Sau khi có kết quả
+Gỡ DEBUG, bật lại module chính, kill Spotify, mở lại.
+Bật `verbose_log=true` và chụp log dạng này là đủ để tao sửa tiếp:
+
+```
+spotify-vn: patched /user-profile-view/v1/user 482 -> 489B
+spotify-vn: nothing to patch /product-state/v1/product_state
+```
+
+Dòng đầu = đã sửa. Dòng thứ hai = **không nhận ra layout** → gửi tao 12 byte đầu của nó
+(DEBUG in ra rồi) là chốt được.
+
 ## Đặc thù Spotify Việt Nam
 
 - Acc VN và acc US/EU dùng **cùng endpoint** `*-spclient.spotify.com` → module không phân biệt

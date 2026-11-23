@@ -1,5 +1,5 @@
-#!name=Spotify VN Premium v2
-#!desc=Bỏ ads + mở Premium phía máy (on-demand, skip không giới hạn, bỏ ép shuffle). v2 sửa lỗi MITM không khớp host shard (gae2-spclient...) và bổ sung endpoint mà Spotify 9.2.x thật sự gọi (remote-config-resolver, nebula). Không mở được offline/320kbps vì server quyết.
+#!name=Spotify VN Premium v2.1
+#!desc=Bỏ ads + mở Premium phía máy (on-demand, skip không giới hạn, bỏ ép shuffle, bỏ badge Premium ở trang chất lượng nhạc / nút Tải xuống). v2.1 thêm bộ quét product-state không phụ thuộc tên field (JSON + protobuf) để trang Tài khoản hết hiện Spotify Free. Không mở được offline/320kbps vì server quyết.
 #!category=Spotify
 #!author=Script gốc: xzavier-amico / lyc-000001 · đóng gói + fix host: Zaka
 #!homepage=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-premium
@@ -30,8 +30,8 @@ URL-REGEX,^https?://[^/]*spotify\.com/(?:ads/v3|ad-logic|net-fortune|sponsoredpl
 AND,((DOMAIN-SUFFIX,spotify.com),(PROTOCOL,UDP)),REJECT
 
 [Script]
-SpotifyVN Request = type=http-request,pattern=^https:\/\/[a-z0-9.-]*spotify\.com(?::443)?\/(?:bootstrap|user-customization-service|nebula|remote-config-resolver),script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-premium/scripts/spotify-request.js,timeout=15
-SpotifyVN Response = type=http-response,pattern=^https:\/\/[a-z0-9.-]*spotify\.com(?::443)?\/(?:bootstrap|user-customization-service|nebula|remote-config-resolver),script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-premium/scripts/spotify-premium.js,requires-body=true,binary-body-mode=true,max-size=8388608,timeout=30
+SpotifyVN Request = type=http-request,pattern=^https:\/\/(?:[a-z0-9-]+\.)*spotify\.com(?::443)?\/(?:bootstrap|user-customization-service|nebula|remote-config-resolver|product-state|product_state|product\/|user-profile|user_profile|profile|account|device-capabilities|login5|subscription|attributes|catalogue|premium|checkout|payment|v3\/login|me(?:\/|\?|$)),script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-premium/scripts/spotify-request.js,timeout=15
+SpotifyVN Response = type=http-response,pattern=^https:\/\/(?:[a-z0-9-]+\.)*spotify\.com(?::443)?\/(?:bootstrap|user-customization-service|nebula|remote-config-resolver|product-state|product_state|product\/|user-profile|user_profile|profile|account|device-capabilities|login5|subscription|attributes|catalogue|premium|checkout|payment|v3\/login|me(?:\/|\?|$)),script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-premium/scripts/spotify-premium.js,requires-body=true,binary-body-mode=true,max-size=1048576,timeout=30
 
 [MITM]
 hostname = %APPEND% *.spotify.com, spotify.com

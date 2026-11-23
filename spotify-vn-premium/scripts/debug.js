@@ -1,6 +1,6 @@
 // ============================================================================
 // spotify-vn-premium / scripts/debug.js
-// Build: 2026-11-24 · v1.0.0 · type: http-response
+// Build: 2026-11-24 · v1.1.0 · type: http-response
 //
 // Mục đích duy nhất: cho biết MITM có thật sự bắt được request của Spotify
 // hay không, và endpoint nào trả về body gì (kiểu + vài byte đầu).
@@ -44,6 +44,29 @@
   }
 
   var path = url.replace(/^https?:\/\/[^/]+/, "");
+
+  // v1.1: nếu là JSON thì in luôn một đoạn đầu (đã che token/base64 dài) và
+  // cờ HAS_FREE — để biết ngay endpoint nào còn trả "free" mà không phải đoán.
+  var peek = "";
+  var hasFree = "";
+  if (kind === "json" && bytes) {
+    try {
+      var txt = "";
+      for (var j = 0; j < bytes.length && j < 4096; j++) {
+        txt += String.fromCharCode(bytes[j]);
+      }
+      hasFree = /"?(free|spotify free)"?/i.test(txt) ? " HAS_FREE" : "";
+      peek =
+        " >> " +
+        txt
+          .replace(/[A-Za-z0-9_\-]{40,}/g, "<…>") // token / base64 / id dài
+          .replace(/\s+/g, " ")
+          .slice(0, 200);
+    } catch (e) {
+      peek = "";
+    }
+  }
+
   console.log(
     "[spot-vn-dbg] " +
       status +
@@ -51,10 +74,12 @@
       len +
       "B " +
       kind +
+      hasFree +
       " " +
       path.slice(0, 90) +
       " | " +
-      hex
+      hex +
+      peek
   );
 
   $done({});

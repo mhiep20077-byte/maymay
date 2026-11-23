@@ -1,5 +1,62 @@
 # Changelog
 
+## v2.1.0 — 2026-11-24
+
+Trả lời đúng 3 thứ còn thiếu sau v2 (ads/skip/on-demand đã OK):
+
+1. Trang **Tài khoản** vẫn hiện "Gói của bạn: Spotify Free" (ảnh 2, 7)
+2. Trang **chất lượng nhạc** vẫn có badge Premium ở "Rất cao" (ảnh 1)
+3. Trang **Tải xuống** vẫn có badge Premium, nút **Phối** bị khoá (ảnh 3, 4)
+
+### Nguyên nhân
+Cả 3 đều đọc từ **product state** — không nằm ở 4 endpoint cũ. Mà product state được trả về
+qua nhiều endpoint khác nhau (`product-state`, `user-profile`, `account`, `login5`, `bootstrap`…),
+đổi tên field giữa các bản client, và **field number không đoán được** (v1 đã đoán sai 1 lần).
+
+### Cách sửa: bỏ đoán field, quét cấu trúc
+`patchUniversal()` mới, chạy sau các patch chính:
+
+- Body là **JSON** → đổi giá trị của key `product / product_state / plan / tier / subscription /
+  catalogue / account_type / type / membership…` khi giá trị ∈ {free, FREE, Free, free-tier,
+  free_tier, spotify-free, spotify_free} → bản Premium tương ứng giữ đúng kiểu chữ.
+  `isPremium/is_premium/is_premium_user/has_premium/is_subscribed…` = `false` → `true`.
+  `ads/has_ads/show_ads/is_ad_supported…` = `true` → `false`.
+- Body là **protobuf** → duyệt cả cây (sâu ≤ 8), field LEN nào là string ≤ 64 byte và đúng
+  bằng một trong các giá trị trên → đổi (độ dài đổi nên length prefix được ghi lại).
+- **Bảo vệ**: field > 64 byte bị bỏ qua (access_token / JWT / base64 / hash không bao giờ bị đụng),
+  field wire-type 0 (varint/enum) **không sửa** — sửa bừa enum là app nhảy bài / crash.
+- Không nhận ra → trả `null` → `$done({})` → app chạy nguyên bản.
+
+### Thêm
+- Module pattern mở rộng: `product-state`, `product_state`, `product/`, `user-profile`, `user_profile`,
+  `profile`, `account`, `device-capabilities`, `login5`, `v3/login`, `subscription`, `attributes`,
+  `catalogue`, `premium`, `checkout`, `payment`, `me`.
+- Script **bỏ qua ngay** các path media (`playplay`, `storage-resolve`, `image(s)`, `video(s)`, `audio`, `cdn`)
+  — không quét body lớn, không có nguy cơ sửa manifest playplay.
+- Module DEBUG: pattern mở rộng theo, `debug.js` v1.1 in thêm **đoạn đầu JSON** (đã che token)
+  và cờ **`HAS_FREE`** — nhìn log là biết ngay endpoint nào còn trả "free".
+- `verbose_log`: log có thêm path, ví dụ
+  `spotify-vn: patched /user-profile-view/v1/user 482 -> 489B`.
+- 12 test mới (JSON product/flag/ads/không-sửa-bừa, protobuf string/FREE/Free/token dài/lồng sâu,
+  binary lạ, endpoint media, pattern khớp endpoint thật) → **42/42 PASS**.
+
+### Không đổi
+- Toàn bộ logic patch 4 endpoint gốc + rewrite protobuf bản gốc.
+- Rule chặn ads, QUIC/UDP, `spotify-request.js`.
+
+### Vẫn không làm được (server quyết, không phải client)
+- Tải offline, 320 kbps (server cấp theo tier thật).
+- Nếu sau khi cài vẫn hiện Free: xem `docs/HUONG-DAN-VN.md` mục "vẫn hiện Free".
+
+## v2.0.1 — 2026-11-24
+
+Chỉ sửa **bộ test**, module không đổi → cài lại module không cần thiết.
+
+### Sửa
+- `tests/test-patch.js`: test `[7]` chỉ strip domain khi đọc `script-path`, nên sau khi chạy
+  `tools/set-repo.sh` (script-path thành URL raw thật) nó báo `FAIL: debug.js không tồn tại` **oan**.
+  Giờ strip tới `scripts/` / `optional/`. Đã chạy lại: **30/30 PASS cả trước và sau `set-repo`**.
+
 ## v2.0.0 — 2026-11-24
 
 Sửa nguyên nhân gốc khiến v1 "cài rồi mà không thấy gì" (chi tiết + bằng chứng: `docs/CHAN-DOAN-V2.md`).

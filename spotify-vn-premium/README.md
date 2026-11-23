@@ -7,7 +7,7 @@ Module **Shadowrocket (小火箭)** gộp: bỏ quảng cáo + mở khoá Premiu
 > (script còn sống, chạy được) + phần chống 304 / chặn HTTP/3 mà bản đó thiếu.
 > Logic patch giữ nguyên gốc — tao chỉ thêm phần hạ tầng và test để biết nó thật sự chạy.
 
-![test](https://img.shields.io/badge/test-30%2F30%20pass-brightgreen)
+![test](https://img.shields.io/badge/test-42%2F42%20pass-brightgreen)
 
 ---
 
@@ -15,7 +15,7 @@ Module **Shadowrocket (小火箭)** gộp: bỏ quảng cáo + mở khoá Premiu
 
 ```
 bash tools/test.sh
-→ PASS: 30    FAIL: 0
+→ PASS: 42    FAIL: 0
 ```
 
 Test dựng protobuf giả đúng layout thật của Spotify rồi decode kết quả ra so từng field, gồm:
@@ -34,6 +34,15 @@ Bản 9.2.x không còn gọi `bootstrap`: 91% API đi qua shard `gae2-spclient.
 v1 vừa dùng wildcard MITM sai (`*-spclient…`) vừa nhắm sai endpoint → patch không chạy byte nào.
 v2 sửa cả hai + thêm rule chặn quảng cáo theo URL. Đọc `docs/CHAN-DOAN-V2.md` trước khi test.
 
+
+### v2.1.0 — trang Tài khoản vẫn hiện "Spotify Free"
+Ads / skip / on-demand đã xong ở v2, nhưng **tên gói** và **badge Premium** đọc từ **product state**,
+thứ v2 chưa đụng tới. v2.1 không đoán field number nữa (v1 đã đoán sai 1 lần) mà quét cấu trúc:
+JSON thì đổi theo tên key, protobuf thì duyệt cả cây và đổi string ngắn đúng bằng `free` → `premium`.
+Field > 64 byte (token/JWT) và field varint/enum **không bị đụng**.
+Đọc `docs/FIX-PRODUCT-STATE.md` — trong đó có cả phần **product state bị cache ở keychain**,
+là lý do phổ biến nhất khiến "cài rồi vẫn thấy Free".
+
 Cái này **không** thay được test trên máy thật — xem `docs/HUONG-DAN-VN.md`.
 
 ---
@@ -46,6 +55,7 @@ spotify-vn-premium/
 ├── spotify-vn-premium-DEBUG.module  # module chẩn đoán: chỉ in log, không sửa gì
 ├── scripts/
 │   ├── spotify-premium.js        # http-response: patch nebula / remote-config / bootstrap / UCS
+│   │                             #   + product state (JSON & protobuf, không phụ thuộc tên field)
 │   ├── spotify-request.js        # http-request: bỏ If-None-Match, ép no-cache
 │   └── debug.js                  # in log từng response MITM bắt được
 ├── optional/
@@ -54,10 +64,11 @@ spotify-vn-premium/
 ├── tools/
 │   ├── set-repo.sh               # trỏ module về repo GitHub của mày
 │   └── test.sh
-├── tests/test-patch.js           # 30 test offline
+├── tests/test-patch.js           # 42 test offline
 ├── docs/
 │   ├── HUONG-DAN-VN.md           # test trên máy thật ở VN, checklist từng bước
 │   ├── CHAN-DOAN-V2.md           # vì sao v1 không chạy + bằng chứng từ log thật + giới hạn
+│   ├── FIX-PRODUCT-STATE.md      # vì sao v2 bỏ ads mà vẫn hiện "Spotify Free" + cách reset cache
 │   └── KY-THUAT.md               # patch cái gì, tại sao, khi Spotify đổi thì sửa ở đâu
 ├── README.md
 ├── CHANGELOG.md
@@ -74,7 +85,7 @@ cd spotify-vn-premium
 # 1) trỏ module về repo của mày (thay user/repo/branch)
 bash tools/set-repo.sh <github-user> <repo> main
 
-# 2) test lại cho chắc (vẫn 30/30)
+# 2) test lại cho chắc (vẫn 42/42)
 bash tools/test.sh
 
 # 3) tạo repo trên GitHub rồi push

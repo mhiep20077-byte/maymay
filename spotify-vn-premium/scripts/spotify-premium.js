@@ -188,6 +188,13 @@
     $done({});
     return;
   }
+
+  // Endpoint nhị phân nặng (playplay manifest, storage-resolve, ảnh, media):
+  // script không có việc gì ở đây, bỏ qua cho nhẹ.
+  if (/\/(?:playplay|storage-resolve|image|images|video|videos|audio|cdn)\//i.test(url)) {
+    $done({});
+    return;
+  }
   const adsOn = flag(opt.block_ads, true);
   const playOn = flag(opt.unlock_playback, true);
   const verbose = flag(opt.verbose_log, false);
@@ -575,7 +582,7 @@
     ["","enable_sponsored_home_results_v2",1,0,"","ad"],
     ["ios-feature-search","prompted_playlist_merchandizing_enabled",1,0,"","misc"],
     ["","should_nova_scroll_use_scrollsita",0,0,"","misc"],
-    ["ios-sociallistening-configuration-impl","premium_gated_start_jam_buttons_enabled",2,0,"","misc"]
+    ["ios-sociallistening-configuration-impl","premium_gated_start_jam_buttons_enabled",2,1,"","misc"]
   ];
 
   // -------------------------------------------------------------- attributes
@@ -584,6 +591,13 @@
 
   const ATTR_CORE = {
     "catalogue": "premium",
+    "product": "premium",
+    "product-type": "premium",
+    "product-state": "premium",
+    "is-premium": true,
+    "premium": true,
+    "blend-enabled": true,
+    "enable-blend": "1",
     "financial-product": "pr:premium,tc:0",
     "is-eligible-premium-unboxing": true,
     "name": "Spotify Premium",
@@ -805,6 +819,130 @@
     return serialize(fields);
   }
 
+  // ------------------------------------------------- product state (v2.1.0)
+  //
+  // "Gói của bạn: Spotify Free" + badge Premium ở trang chất lượng nhạc / nút
+  // Tải xuống / nút Phối KHÔNG do 4 endpoint phía trên quyết định. Chúng đọc
+  // từ product state mà nhiều endpoint khác trả về, host đổi theo region
+  // (gae2-, gew1-, guc3-spclient...) và Spotify đổi tên field giữa các bản.
+  //
+  // v1 đoán field number -> sai. Lần này làm kiểu "cấu trúc bất khả tri":
+  //   1. body là JSON     -> đổi giá trị của key product/plan/tier/subscription
+  //   2. body là protobuf -> duyệt cả cây, string ngắn đúng bằng "free" -> "premium"
+  //   3. không nhận ra    -> null, app chạy nguyên bản
+  //
+  // Chốt an toàn: chỉ đụng string <= 64 byte (token/JWT/base64 dài -> bỏ qua),
+  // KHÔNG đụng field varint (sửa bừa enum = nhảy bài / crash), sâu tối đa 8.
+
+  const FREE_MAP = {
+    free: "premium",
+    FREE: "PREMIUM",
+    Free: "Premium",
+    "free-tier": "premium",
+    free_tier: "premium",
+    "spotify-free": "Spotify Premium",
+    spotify_free: "Spotify Premium"
+  };
+
+  const PRODUCT_KEY = /^(?:product|product_?state|product_?type|product_?name|product_?id|plan|plan_?type|plan_?name|account_?type|account_?plan|subscription|subscription_?type|subscription_?plan|subscription_?name|tier|sub_?tier|catalogue|catalog|product_?catalogue|membership|membership_?type|pricing_?plan|product_?level|type)$/i;
+  const PREMIUM_FLAG_KEY = /^(?:is_?premium|is_?premium_?user|is_?premium_?account|premium|premium_?user|has_?premium|is_?subscribed|subscribed|is_?paid|paid_?user)$/i;
+  const AD_FLAG_KEY = /^(?:ads|has_?ads|show_?ads|is_?ad_?supported|ad_?supported|ads_?enabled)$/i;
+
+  function decodeUtf8(bytes) {
+    try {
+      return TD.decode(bytes);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function patchJsonProduct(str) {
+    let root;
+    try {
+      root = JSON.parse(str);
+    } catch (e) {
+      return null;
+    }
+    if (!root || typeof root !== "object") return null;
+    let changed = false;
+
+    const walk = (node) => {
+      if (Array.isArray(node)) {
+        for (const v of node) walk(v);
+        return;
+      }
+      if (!node || typeof node !== "object") return;
+      for (const k of Object.keys(node)) {
+        const v = node[k];
+        if (typeof v === "string") {
+          if (PRODUCT_KEY.test(k) && Object.prototype.hasOwnProperty.call(FREE_MAP, v)) {
+            node[k] = FREE_MAP[v];
+            changed = true;
+          }
+        } else if (typeof v === "boolean") {
+          if (PREMIUM_FLAG_KEY.test(k) && v === false) {
+            node[k] = true;
+            changed = true;
+          } else if (AD_FLAG_KEY.test(k) && v === true) {
+            node[k] = false;
+            changed = true;
+          }
+        } else {
+          walk(v);
+        }
+      }
+    };
+
+    walk(root);
+    return changed ? JSON.stringify(root) : null;
+  }
+
+  // Duyệt cây protobuf, đổi string ngắn "free" -> "premium". Trả true nếu có.
+  function rewriteStrings(fields, depth) {
+    if (depth > 8) return false;
+    let changed = false;
+    for (const f of fields) {
+      if (f.w !== 2 || !f.p || !f.p.length) continue;
+
+      // Payload có thể là message con -> thử parse trước.
+      if (f.p.length > 1) {
+        const inner = parse(f.p);
+        if (inner && inner.length) {
+          if (rewriteStrings(inner, depth + 1)) {
+            f.p = serialize(inner);
+            changed = true;
+          }
+          continue;
+        }
+      }
+
+      if (f.p.length > 64) continue; // token / JWT / base64 dài: không đụng
+      const s = decodeUtf8(f.p);
+      if (s === null) continue;
+      const rep = FREE_MAP[s];
+      if (rep && rep !== s) {
+        f.p = TE.encode(rep);
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
+  function patchUniversal(buffer) {
+    if (buffer.length && (buffer[0] === 0x7b || buffer[0] === 0x5b)) {
+      const s = decodeUtf8(buffer);
+      if (s !== null) {
+        const out = patchJsonProduct(s);
+        if (out) return TE.encode(out);
+      }
+      return null;
+    }
+    const fields = parse(buffer);
+    if (!fields || !fields.length) return null;
+    if (!rewriteStrings(fields, 0)) return null;
+    return serialize(fields);
+  }
+
   const patchCustomize = (b) => edit(b, [1], patchUcs);
   const patchBootstrap = (b) => edit(b, [2, 1, 1, 1], patchUcs);
 
@@ -814,21 +952,19 @@
   // Mọi hàm patch đều trả null khi không nhận ra -> $done({}) = body nguyên bản.
   let out = null;
   if (url.indexOf("bootstrap") >= 0) {
-    out = patchBootstrap(body) || patchCustomize(body);
+    out = patchBootstrap(body) || patchCustomize(body) || patchUniversal(body);
   } else if (url.indexOf("user-customization-service") >= 0) {
-    out = patchCustomize(body) || patchBootstrap(body);
+    out = patchCustomize(body) || patchBootstrap(body) || patchUniversal(body);
   } else if (url.indexOf("nebula") >= 0) {
     // /nebula/v1/configuration/attributes — chuỗi AccountAttribute ở gốc message.
-    out = patchAttributesStrict(body);
+    out = patchAttributesStrict(body) || patchUniversal(body);
   } else if (url.indexOf("remote-config-resolver") >= 0) {
     // /remote-config-resolver/v3/configuration — AssignedValue ở gốc message.
-    out = patchConfigurationStrict(body);
-  } else if (url.indexOf("device-capabilities") >= 0) {
-    // Server tính capability theo product của account; client-side không sửa
-    // được an toàn (layout khác), nên để nguyên.
-    out = null;
+    out = patchConfigurationStrict(body) || patchUniversal(body);
   } else {
-    out = patchCustomize(body) || patchBootstrap(body);
+    // product-state / user-profile / account / device-capabilities / login5...
+    // Không đoán field number nữa: quét cấu trúc, gặp "free" thì đổi.
+    out = patchUniversal(body);
   }
 
   if (!out || same(out, body)) {
@@ -837,6 +973,9 @@
     return;
   }
 
-  if (verbose) console.log("spotify-vn: " + body.length + " -> " + out.length + " bytes");
+  if (verbose) {
+    const pth = url.replace(/^https?:\/\/[^/]+/, "").split("?")[0];
+    console.log("spotify-vn: patched " + pth.slice(0, 70) + " " + body.length + " -> " + out.length + "B");
+  }
   $done({ body: out });
 })();
