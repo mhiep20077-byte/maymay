@@ -1,5 +1,5 @@
-#!name=Spotify VN Premium v2.2
-#!desc=Bỏ ads + mở Premium phía máy (on-demand, skip không giới hạn, bỏ ép shuffle, bỏ badge Premium ở trang chất lượng nhạc / nút Tải xuống). v2.2 bắt đúng 3 họ endpoint mà client 9.2.x thật sự dùng để quyết định Free/Premium (pam-view-service, playback-settings, clientrestrictions) và bóc khung gRPC trước khi sửa — v2.1 bỏ sót cả 3 nên "Gói của bạn: Spotify Free", badge Premium và nút Phối vẫn khoá. Không mở được offline/320kbps vì server quyết.
+#!name=Spotify VN Premium v2.3
+#!desc=Bỏ ads + mở Premium phía máy (on-demand, skip không giới hạn, bỏ ép shuffle). v2.3 thêm: đổi nhãn viên badge Gói Premium thành chữ ToCam + màu cam vàng (#FFA500), gạt cờ khoá premium_only ở playback-settings (badge Premium ở trang Chất lượng), mở khoá danh sách integration (nút Phối nhạc / Jam / Mix), và xử lý cả JSON lẫn gRPC cho 3 họ endpoint pam-view-service / playback-settings / clientrestrictions. Không mở được offline/320kbps vì server quyết.
 #!category=Spotify
 #!author=Script gốc: xzavier-amico / lyc-000001 · đóng gói + fix host: Zaka
 #!homepage=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-premium

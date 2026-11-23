@@ -765,6 +765,70 @@ test("module pattern khớp 3 họ endpoint mới (pam / settings / restrictions
   assert.ok(!re.test("https://gae2-spclient.spotify.com/playplay/v1/key/abc"), "pattern bắt nhầm playplay");
 });
 
+console.log("\n[9] v2.3 — badge ToCam / cam vàng / gạt cờ khoá\n");
+
+test("JSON GetPremiumPlanRow: badge 'Premium' -> 'ToCam'", () => {
+  const body = Buffer.from(JSON.stringify({ badge: { text: "Premium", label: "Premium" } }));
+  const out = runResponse(body, URL_PLANROW);
+  assert.ok(out && out.body, "không đổi nhãn badge");
+  const o = JSON.parse(Buffer.from(out.body).toString("utf8"));
+  assert.strictEqual(o.badge.text, "ToCam");
+  assert.strictEqual(o.badge.label, "ToCam");
+});
+
+test("JSON badge: màu xanh Spotify -> #FFA500", () => {
+  const body = Buffer.from(
+    JSON.stringify({ badge: { text: "Premium", color: "#1ED760", background: "1DB954" } })
+  );
+  const out = runResponse(body, URL_PLANROW);
+  assert.ok(out && out.body, "không đổi màu");
+  const o = JSON.parse(Buffer.from(out.body).toString("utf8"));
+  assert.strictEqual(o.badge.color, "#FFA500");
+  assert.strictEqual(o.badge.background, "FFA500");
+});
+
+test("JSON badge: chuỗi khác (tên gói 'Spotify Free') không bị đổi thành ToCam", () => {
+  const body = Buffer.from(JSON.stringify({ rows: [{ name: "Spotify Free" }] }));
+  const out = runResponse(body, URL_PLANROW);
+  const o = JSON.parse(Buffer.from(out.body).toString("utf8"));
+  assert.strictEqual(o.rows[0].name, "Spotify Premium");
+});
+
+test("gRPC PAM: string 'Premium' -> 'ToCam'", () => {
+  const out = runResponse(gframe(0x00, fStr(1, "Premium")), URL_BADGE);
+  assert.ok(out && out.body, "không patch chữ badge");
+  const fr = gframes(Buffer.from(out.body));
+  assert.strictEqual(one(decode(fr[0].payload), 1).p.toString("utf8"), "ToCam");
+});
+
+test("gRPC playback-settings: premium_only=true -> false", () => {
+  const pair = cat(fStr(1, "premium_only"), fVarint(2, 1));
+  const out = runResponse(gframe(0x00, cat(fBytes(1, pair))), URL_SETTINGS);
+  assert.ok(out && out.body, "không gạt cờ khoá");
+  const fr = gframes(Buffer.from(out.body));
+  const entry = decode(one(decode(fr[0].payload), 1).p);
+  assert.strictEqual(one(entry, 1).p.toString("utf8"), "premium_only");
+  assert.strictEqual(one(entry, 2).v, 0);
+});
+
+test("gRPC restrictions: cặp locked=true -> false (không xoá cả body)", () => {
+  const pair = cat(fStr(1, "jam_locked"), fVarint(2, 1));
+  const out = runResponse(gframe(0x00, cat(fBytes(1, pair))), URL_RESTRICT);
+  assert.ok(out && out.body, "không patch restrictions");
+  const fr = gframes(Buffer.from(out.body));
+  assert.ok(fr[0].payload.length > 0, "mất dữ liệu restriction");
+  const entry = decode(one(decode(fr[0].payload), 1).p);
+  assert.strictEqual(one(entry, 2).v, 0);
+});
+
+test("JSON restrictions: mảng integration bị khoá -> rỗng", () => {
+  const body = Buffer.from(JSON.stringify({ restrictedIntegrations: ["BLEND", "JAM"] }));
+  const out = runResponse(body, URL_RESTRICT);
+  assert.ok(out && out.body, "không mở khoá JSON");
+  const o = JSON.parse(Buffer.from(out.body).toString("utf8"));
+  assert.deepStrictEqual(o.restrictedIntegrations, []);
+});
+
 console.log("\n[8] Module DEBUG\n");
 
 test("module DEBUG + debug.js tồn tại, script-path trỏ đúng file", () => {

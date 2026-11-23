@@ -120,6 +120,22 @@ Sau khi cài v2.2 **bắt buộc** đăng xuất/đăng nhập lại Spotify (PA
 Vẫn Free thì chạy `spotify-vn-premium-DEBUG.module`, mở trang Tài khoản 1 lần, gửi các dòng
 `[spot-vn-dbg]` có `HAS_FREE`.
 
+## Bước 4d (v2.3) — Đã thành Premium nhưng muốn badge là "ToCam" màu cam vàng
+
+`GetPremiumPlanRow` trả **JSON**, chữ (`"text":"Premium"`) và màu (`"color":"#1ED760"`) nằm
+ngay trong đó. v2.3 ghi đè tận payload: nhãn → `ToCam`, mọi mã xanh Spotify → `#FFA500`;
+gRPC PAM cũng đổi chuỗi `Premium → ToCam`. Đồng thời gạt các cờ `premium_only / locked /
+restricted / requires_*` ở `playback-settings` (chip "Premium" trang chất lượng) và gạt từng
+cờ trong `clientrestrictions` thay vì xoá cả body.
+
+Sau khi push: gỡ module cũ → dán lại raw URL → dấu `+`, rồi **đăng xuất / đăng nhập lại**
+(badge nằm trong cache keychain). Vẫn chữ Premium thì gỡ app cài lại.
+
+Đổi chữ/màu khác: thêm `$argument` `{"badge_text":"ToCam","badge_color":"#FFA500"}`.
+
+Vẫn chưa được → gửi log `spot-vn-dbg` (v1.3 in cả chuỗi `s=` bên trong payload).
+Chi tiết + giới hạn: `docs/V2.3-BADGE-VA-MAU.md`.
+
 ## Bước 4b (v2.1) — Vẫn hiện "Gói của bạn: Spotify Free" / còn badge Premium / nút Phối bị khoá
 
 3 thứ này **không** đọc từ 4 endpoint mà v2 patch. Chúng đọc từ **product state**.

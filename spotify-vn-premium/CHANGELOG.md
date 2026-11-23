@@ -1,5 +1,47 @@
 # Changelog
 
+## v2.3.0 — 2026-11-24
+
+### Bối cảnh
+Sau v2.2: ads biến mất, tua được, skip không giới hạn, hàng "Gói Premium của bạn" đã thành
+Premium (ảnh 3) — nhưng:
+
+- trang Chất lượng vẫn khoá "Rất cao" (ảnh 1–2),
+- viên badge vẫn là chữ **Premium** màu xanh Spotify,
+- nút **Phối nhạc** (Blend) vẫn không hiện.
+
+Yêu cầu: đổi viên badge thành chữ **ToCam** + màu **cam vàng**, còn các thứ khác giữ nguyên.
+
+### Sửa
+
+1. **Nhãn + màu badge (mới)** — `pam-view-service/v1/GetPremiumPlanRow` là **JSON REST**, không
+   phải gRPC. v2.2 chỉ đổi giá trị `free → premium` nên viên badge vẫn lấy chữ/màu từ server.
+   v2.3 ghi đè trong chính payload đó:
+   - key kiểu `badge / badge_text / pill / chip / tag` với giá trị `Premium|Free` → `ToCam`
+   - key kiểu `title / name / text / label / value` chỉ đổi khi giá trị đúng bằng `Premium`
+     (không đụng "Spotify Free" → vẫn thành "Spotify Premium")
+   - key kiểu `color / tint / background / fill` và mọi mã xanh Spotify
+     (`#1ED760 #1DB954 #1FDF64 #1AA34A #158A3F #2EBD59 #30D158`) → `#FFA500` (giữ/không giữ dấu `#`
+     theo giá trị gốc)
+   - gRPC PAM: chuỗi đúng bằng `Premium` → `ToCam`, mã xanh → cam
+   - đổi được qua `$argument`: `{"badge_text":"ToCam","badge_color":"#FFA500"}`
+2. **Gạt cờ khoá premium ở playback-settings** — thêm `unlockPairs()`: cặp protobuf
+   `{1: tên_khoá, 2: bool}` có tên khoá chứa `premium / lock / restrict / requires / paid /
+   subscriber / upsell / entitle` mà đang `true` → `false`. Đây là phần làm chip "Premium" ở
+   trang chất lượng.
+3. **clientrestrictions** — trước chỉ trả message rỗng; giờ nếu server trả danh sách khoá cụ thể
+   thì gạt từng cờ về `false` (giữ dữ liệu khác), JSON thì làm rỗng mảng `restrictedIntegrations`.
+   Message rỗng chỉ dùng khi không có gì để gạt.
+4. **DEBUG v1.3** — in thêm các chuỗi ASCII đọc được trong payload (tên field / giá trị enum) và
+   hex 32 byte đầu, để lần sau chốt đúng field trong một lần thay vì đoán.
+5. **Test 58/58** (`bash tools/test.sh`), gồm 7 test mới cho badge ToCam, màu cam, cờ premium_only,
+   restriction JSON + gRPC.
+
+### Không hứa
+Tải offline và 320 kbps thật vẫn do server cấp theo tier (`storage-resolve … product=0`),
+client không với tới. Chữ/màu badge nếu app vẽ cứng trong UI (không lấy từ payload) thì proxy
+không đổi được — phải jailbreak + tweak, xem `docs/V2.3-BADGE-VA-MAU.md`.
+
 ## v2.2.0 — 2026-11-24
 
 ### Vì sao v2.1 không có tác dụng (bằng chứng từ log proxy thật, 550 request)

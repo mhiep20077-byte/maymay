@@ -1038,16 +1038,123 @@
     return changed ? serialize(fields) : null;
   }
 
+  // ------------------------------------ nhãn + màu viên badge (v2.3.0)
+  //
+  // Hàng "Gói Premium của bạn" + viên badge bên phải ở trang Tài khoản được vẽ
+  // từ JSON của /pam-view-service/v1/GetPremiumPlanRow?locale=vi (REST, không
+  // phải gRPC). v2.2 chỉ đổi free -> premium nên viên đó vẫn là chữ "Premium"
+  // màu xanh mặc định. v2.3 ghi đè nhãn hiển thị + bảng mã màu xanh Spotify.
+  //
+  // Đổi được qua $argument: {"badge_text":"ToCam","badge_color":"#FFA500"}.
+  const BADGE_TEXT =
+    typeof opt.badge_text === "string" && opt.badge_text ? opt.badge_text : "ToCam";
+  const BADGE_COLOR =
+    typeof opt.badge_color === "string" && opt.badge_color ? opt.badge_color : "#FFA500";
+
+  const BADGE_KEY =
+    /^(?:badge|badge_?text|badge_?label|badge_?title|badge_?name|pill|pill_?text|chip|chip_?text|tag)$/i;
+  const LABEL_KEY =
+    /^(?:title|name|text|label|value|plan_?name|plan_?title|display_?name|short_?name)$/i;
+  const COLOR_KEY = /(?:colou?r|tint|background|bg|fill)$/i;
+  const PLAN_WORD = /^(?:spotify\s*_?\s*)?(?:premium|free)$/i;
+  const PREMIUM_WORD = /^(?:spotify\s*_?\s*)?premium$/i;
+  const BADGE_ONLY = "Premium";
+  const GREEN_HEX = /#?(?:1ed760|1db954|1fdf64|1aa34a|158a3f|2ebd59|30d158|1ed75f)/gi;
+
+  function recolor(str) {
+    if (!str || str.length > 60) return str;
+    return str.replace(GREEN_HEX, (m) =>
+      m.charAt(0) === "#" ? BADGE_COLOR : BADGE_COLOR.replace(/^#/, "")
+    );
+  }
+
+  function patchBadgeJson(str) {
+    let root;
+    try {
+      root = JSON.parse(str);
+    } catch (e) {
+      return null;
+    }
+    if (!root || typeof root !== "object") return null;
+    let changed = false;
+
+    const walk = (node) => {
+      if (Array.isArray(node)) {
+        for (const v of node) walk(v);
+        return;
+      }
+      if (!node || typeof node !== "object") return;
+      for (const k of Object.keys(node)) {
+        const v = node[k];
+        if (typeof v === "string") {
+          const hasHash = v.charAt(0) === "#";
+          const colorValue = hasHash ? BADGE_COLOR : BADGE_COLOR.replace(/^#/, "");
+          const tv = v.trim();
+          let nv = v;
+          if (BADGE_KEY.test(k) && PLAN_WORD.test(tv)) nv = BADGE_TEXT;
+          else if (LABEL_KEY.test(k) && PREMIUM_WORD.test(tv)) nv = BADGE_TEXT;
+          else if (COLOR_KEY.test(k) && new RegExp(GREEN_HEX.source, "i").test(v)) nv = colorValue;
+          else nv = recolor(v);
+          if (nv !== v) {
+            node[k] = nv;
+            changed = true;
+          }
+        } else walk(v);
+      }
+    };
+
+    walk(root);
+    return changed ? JSON.stringify(root) : null;
+  }
+
+  function patchBadgeStrings(fields, depth) {
+    if (depth > 8) return false;
+    let changed = false;
+    for (const f of fields) {
+      if (f.w !== 2 || !f.p || !f.p.length) continue;
+      // Coi đây là chuỗi hiển thị trước (nhãn / mã màu): toàn ký tự in được,
+      // ngắn. Tránh trường hợp chuỗi ASCII tình cờ parse ra protobuf hợp lệ.
+      if (f.p.length <= 64) {
+        const s = decodeUtf8(f.p);
+        if (s !== null && /^[\x20-\x7e]+$/.test(s)) {
+          let nv = s === BADGE_ONLY ? BADGE_TEXT : s;
+          nv = recolor(nv);
+          if (nv !== s) {
+            f.p = TE.encode(nv);
+            changed = true;
+          }
+          continue;
+        }
+      }
+      const inner = parse(f.p);
+      if (inner && inner.length) {
+        if (patchBadgeStrings(inner, depth + 1)) {
+          f.p = serialize(inner);
+          changed = true;
+        }
+      }
+    }
+    return changed;
+  }
+
   function patchPam(b) {
     if (b.length && (b[0] === 0x7b || b[0] === 0x5b)) {
       const s = decodeUtf8(b);
-      if (s !== null) {
-        const o = patchJsonProduct(s);
-        if (o) return TE.encode(o);
-      }
-      return null;
+      if (s === null) return null;
+      let cur = s;
+      const badge = patchBadgeJson(cur);
+      if (badge) cur = badge;
+      const prod = patchJsonProduct(cur);
+      if (prod) cur = prod;
+      return cur !== s ? TE.encode(cur) : null;
     }
-    return patchUniversal(b) || boostEnum(b);
+    const fields = parse(b);
+    if (!fields || !fields.length) return null;
+    let changed = false;
+    if (patchBadgeStrings(fields, 0)) changed = true;
+    if (rewriteStrings(fields, 0)) changed = true;
+    if (changed) return serialize(fields);
+    return boostEnum(b);
   }
 
   // ------------------------------------------- client restrictions (v2.2.0)
@@ -1056,10 +1163,103 @@
   // trả danh sách tính năng bị khoá theo tier (Blend / Jam / Mix / social...).
   // Message rỗng = "không khoá gì" -> nút Phối/Jam không còn bị premium chặn.
   // Chỉ làm khi body parse được như protobuf; JSON để nguyên.
+  const LOCK_KEY =
+    /(?:premium|lock|restrict|requires|requirement|paid|subscriber|upsell|entitle|blocked|disabled|unavailable)/i;
+  const LOCK_LIST_KEY = /(?:restrict|locked|blocked|unavailable|disallow|forbidden|integration)/i;
+
+  function clearJsonLocks(str) {
+    let root;
+    try {
+      root = JSON.parse(str);
+    } catch (e) {
+      return null;
+    }
+    if (!root || typeof root !== "object") return null;
+    let changed = false;
+
+    const walk = (node) => {
+      if (Array.isArray(node)) {
+        for (const v of node) walk(v);
+        return;
+      }
+      if (!node || typeof node !== "object") return;
+      for (const k of Object.keys(node)) {
+        const v = node[k];
+        if (Array.isArray(v) && LOCK_LIST_KEY.test(k) && v.length) {
+          node[k] = [];
+          changed = true;
+        } else if (typeof v === "boolean" && LOCK_KEY.test(k) && v === true) {
+          node[k] = false;
+          changed = true;
+        } else if (v && typeof v === "object") walk(v);
+      }
+    };
+
+    walk(root);
+    return changed ? JSON.stringify(root) : null;
+  }
+
+  // Protobuf dạng cặp { 1: tên_khoá, 2: bool|message } -> gạt khoá premium về
+  // false. Chỉ đụng khi tên khoá nói rõ premium/lock/restrict (an toàn).
+  function unlockPairs(fields, depth) {
+    if (depth > 6) return false;
+    let changed = false;
+    for (const f of fields) {
+      if (f.w !== 2 || !f.p || !f.p.length) continue;
+      const inner = parse(f.p);
+      if (!inner || !inner.length) continue;
+      let local = unlockPairs(inner, depth + 1);
+      const kf = first(inner, 1);
+      const vf = first(inner, 2);
+      const ks = kf ? text(kf) : null;
+      if (ks && ks.length <= 64 && vf && LOCK_KEY.test(ks)) {
+        if (vf.w === 0 && vf.v === 1) {
+          vf.v = 0;
+          local = true;
+        } else if (vf.w === 2 && vf.p && vf.p.length) {
+          const vv = parse(vf.p);
+          if (vv && vv.length) {
+            let sub = false;
+            for (const g of vv) {
+              if (g.w === 0 && g.v === 1) {
+                g.v = 0;
+                sub = true;
+              }
+            }
+            if (sub) {
+              vf.p = serialize(vv);
+              local = true;
+            }
+          } else {
+            const sv = text(vf);
+            if (sv === "true" || sv === "TRUE") {
+              vf.p = TE.encode("false");
+              local = true;
+            }
+          }
+        }
+      }
+      if (local) {
+        f.p = serialize(inner);
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
   function patchRestrictions(b) {
     if (!b.length) return null;
-    if (b[0] === 0x7b || b[0] === 0x5b) return null;
-    if (!parse(b)) return null;
+    if (b[0] === 0x7b || b[0] === 0x5b) {
+      const s = decodeUtf8(b);
+      if (s === null) return null;
+      const o = clearJsonLocks(s);
+      return o ? TE.encode(o) : null;
+    }
+    const fields = parse(b);
+    if (!fields) return null;
+    // Đã có cờ khoá dạng cặp key/bool -> gạt trước; không có gì để gạt thì trả
+    // message rỗng = "không khoá integration nào" (Blend / Jam / Mix).
+    if (unlockPairs(fields, 0)) return serialize(fields);
     return new Uint8Array(0);
   }
 
@@ -1131,13 +1331,19 @@
     if (b.length && (b[0] === 0x7b || b[0] === 0x5b)) {
       const s = decodeUtf8(b);
       if (s === null) return null;
-      const o = setQualityJson(s);
-      return o ? TE.encode(o) : null;
+      let cur = s;
+      const q = setQualityJson(cur);
+      if (q) cur = q;
+      const l = clearJsonLocks(cur);
+      if (l) cur = l;
+      return cur !== s ? TE.encode(cur) : null;
     }
     const fields = parse(b);
     if (!fields || !fields.length) return null;
-    if (!setQualityPairs(fields, 0)) return null;
-    return serialize(fields);
+    let changed = false;
+    if (setQualityPairs(fields, 0)) changed = true;
+    if (unlockPairs(fields, 0)) changed = true;
+    return changed ? serialize(fields) : null;
   }
 
   // ------------------------------------------------------------------- entry

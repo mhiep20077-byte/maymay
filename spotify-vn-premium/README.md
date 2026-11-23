@@ -7,7 +7,7 @@ Module **Shadowrocket (小火箭)** gộp: bỏ quảng cáo + mở khoá Premiu
 > (script còn sống, chạy được) + phần chống 304 / chặn HTTP/3 mà bản đó thiếu.
 > Logic patch giữ nguyên gốc — tao chỉ thêm phần hạ tầng và test để biết nó thật sự chạy.
 
-![test](https://img.shields.io/badge/test-51%2F51%20pass-brightgreen)
+![test](https://img.shields.io/badge/test-58%2F58%20pass-brightgreen)
 
 ---
 
@@ -15,7 +15,7 @@ Module **Shadowrocket (小火箭)** gộp: bỏ quảng cáo + mở khoá Premiu
 
 ```
 bash tools/test.sh
-→ PASS: 51    FAIL: 0
+→ PASS: 58    FAIL: 0
 ```
 
 Test dựng protobuf giả đúng layout thật của Spotify rồi decode kết quả ra so từng field, gồm:
@@ -34,6 +34,14 @@ Bản 9.2.x không còn gọi `bootstrap`: 91% API đi qua shard `gae2-spclient.
 v1 vừa dùng wildcard MITM sai (`*-spclient…`) vừa nhắm sai endpoint → patch không chạy byte nào.
 v2 sửa cả hai + thêm rule chặn quảng cáo theo URL. Đọc `docs/CHAN-DOAN-V2.md` trước khi test.
 
+
+### v2.3.0 — badge ToCam + cam vàng, mở khoá chip chất lượng
+
+`GetPremiumPlanRow` là JSON REST: v2.3 ghi đè nhãn (`Premium → ToCam`) và mọi mã xanh Spotify
+(`#1ED760 …`) thành `#FFA500` ngay trong payload; gRPC PAM cũng đổi chuỗi `Premium → ToCam`.
+Thêm `unlockPairs()` gạt các cờ `premium_only / locked / restricted / requires_*` về `false` ở
+`playback-settings`, và `clientrestrictions` giờ gạt từng cờ thay vì xoá cả body.
+Chi tiết + giới hạn: `docs/V2.3-BADGE-VA-MAU.md`.
 
 ### v2.2.0 — vì sao v2.1 vẫn Free (đã chốt bằng log thật)
 

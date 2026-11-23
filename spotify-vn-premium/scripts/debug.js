@@ -1,6 +1,6 @@
 // ============================================================================
 // spotify-vn-premium / scripts/debug.js
-// Build: 2026-11-24 · v1.2.0 · type: http-response
+// Build: 2026-11-24 · v1.3.0 · type: http-response
 //
 // Mục đích duy nhất: in ra log cho biết endpoint nào trả body gì, để chốt
 // patch chính xác. KHÔNG sửa gì — $done({}) = trả nguyên bản.
@@ -70,8 +70,26 @@
     else kind = "proto";
   }
 
+  // --- rút các chuỗi ASCII đọc được trong payload (tên field, giá trị enum) ---
+  function stringsOf(b, max) {
+    var out = [];
+    var cur = "";
+    for (var i = 0; i < b.length && out.length < 30; i++) {
+      var c = b[i];
+      if (c >= 0x20 && c < 0x7f) {
+        cur += String.fromCharCode(c);
+        if (cur.length > 60) cur = cur.slice(0, 60);
+      } else {
+        if (cur.length >= 3) out.push(cur);
+        cur = "";
+      }
+    }
+    if (cur.length >= 3) out.push(cur);
+    return out.join("|").slice(0, max);
+  }
+
   var hex = "";
-  var hn = Math.min(core.length, 16);
+  var hn = Math.min(core.length, 32);
   for (var i2 = 0; i2 < hn; i2++) hex += ("0" + core[i2].toString(16)).slice(-2);
 
   // --- tìm dấu hiệu free / premium trong payload ---
@@ -90,9 +108,12 @@
     peek = " >> " + txt.replace(/[A-Za-z0-9_\-]{40,}/g, "<…>").replace(/\s+/g, " ").slice(0, 220);
   }
 
+  var strs = stringsOf(core, 300);
+
   console.log(
     "[spot-vn-dbg] " + status + " " + len + "B " + kind + "/core=" + core.length + "B" +
-      flagFree + flagPrem + " " + path.slice(0, 90) + " | " + hex + peek
+      flagFree + flagPrem + " " + path.slice(0, 90) + " | " + hex +
+      (strs ? " | s=" + strs : "") + peek
   );
 
   $done({});
