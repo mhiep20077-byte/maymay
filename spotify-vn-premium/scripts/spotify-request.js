@@ -1,6 +1,6 @@
 // ============================================================================
 // spotify-vn-premium / scripts/spotify-request.js
-// Build: 2026-11-24 · v1.0.0 · type: http-request
+// Build: 2026-11-24 · v1.1.0 · type: http-request
 //
 // Việc duy nhất: dọn request TRƯỚC khi Spotify trả lời, để script sửa
 // protobuf (spotify-premium.js) luôn nhận được body thật.
@@ -27,9 +27,14 @@
   // v2.0.0: bắt theo path, host nào của spotify.com cũng được — client mới
   // gọi qua shard (gae2-spclient.spotify.com), không phải spclient.wg nữa.
   var isTarget =
-    /^https:\/\/[a-z0-9.-]*spotify\.com(?::443)?\/(?:bootstrap|user-customization-service|nebula|remote-config-resolver)/i.test(
+    /^https:\/\/[a-z0-9.-]*spotify\.com(?::443)?\/(?:bootstrap|user-customization-service|nebula|remote-config-resolver|pam-view-service|playback-settings|clientrestrictions)/i.test(
       url
     );
+
+  // v2.2: PAM / playback-settings / clientrestrictions đi qua gRPC. Ép
+  // Accept-Encoding: identity trên các endpoint này có thể làm hỏng khung
+  // gRPC, nên chỉ bỏ header điều kiện, giữ nguyên encoding.
+  var isGrpcish = /(?:pam-view-service|playback-settings|clientrestrictions)/i.test(url);
 
   if (!isTarget) {
     $done({});
@@ -46,7 +51,7 @@
     if (
       lk === "if-none-match" ||
       lk === "if-modified-since" ||
-      (STRIP_IDENTITY && lk === "accept-encoding")
+      (STRIP_IDENTITY && !isGrpcish && lk === "accept-encoding")
     ) {
       dropped.push(lk);
       continue;
@@ -56,7 +61,7 @@
 
   out["Cache-Control"] = "no-cache";
   out["Pragma"] = "no-cache";
-  if (STRIP_IDENTITY) out["Accept-Encoding"] = "identity";
+  if (STRIP_IDENTITY && !isGrpcish) out["Accept-Encoding"] = "identity";
 
   if (dropped.length) console.log("[spotify-vn] request cleaned: " + dropped.join(", "));
 

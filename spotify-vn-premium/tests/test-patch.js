@@ -651,7 +651,121 @@ test("module pattern khớp endpoint product-state / user-profile / login5", () 
   assert.ok(!re.test("https://gae2-spclient.spotify.com/playplay/v1/key/abc"), "pattern bắt nhầm playplay");
 });
 
-console.log("\n[7] Module DEBUG\n");
+console.log("\n[7] gRPC — pam-view-service / playback-settings / clientrestrictions\n");
+
+const URL_BADGE =
+  "https://gae2-spclient.spotify.com/pam-view-service/spotify.pam.v2.PamViewService/GetYourPremiumBadge";
+const URL_PLAN =
+  "https://gae2-spclient.spotify.com/pam-view-service/spotify.pam.v2.PamViewService/GetPlanOverview";
+const URL_PLANROW = "https://gae2-spclient.spotify.com/pam-view-service/v1/GetPremiumPlanRow?locale=vi";
+const URL_RESTRICT =
+  "https://spclient.wg.spotify.com/spotify.clientrestrictions.v1.ClientRestrictionsService/GetRestrictedIntegrations";
+const URL_SETTINGS =
+  "https://gae2-spclient.spotify.com/playback-settings/spotify.playbacksettings.PlaybackSettingsService/GetAllStoredContentValues";
+
+// Khung gRPC: [flag][len 4B BE][payload]
+function gframe(flag, payload) {
+  const n = payload.length;
+  return Buffer.concat([
+    Buffer.from([flag, (n >>> 24) & 0xff, (n >>> 16) & 0xff, (n >>> 8) & 0xff, n & 0xff]),
+    payload,
+  ]);
+}
+function gframes(buf) {
+  const out = [];
+  let i = 0;
+  while (i + 5 <= buf.length) {
+    const flag = buf[i];
+    const n = ((buf[i + 1] << 24) | (buf[i + 2] << 16) | (buf[i + 3] << 8) | buf[i + 4]) >>> 0;
+    assert.ok(i + 5 + n <= buf.length, "khung gRPC hỏng");
+    out.push({ flag, payload: Buffer.from(buf.subarray(i + 5, i + 5 + n)) });
+    i += 5 + n;
+  }
+  assert.strictEqual(i, buf.length, "độ dài khung không khớp");
+  return out;
+}
+
+test("gRPC: badge enum 0 (free) -> 1, khung giữ đúng", () => {
+  const inner = cat(fVarint(1, 0));
+  const out = runResponse(gframe(0x00, inner), URL_BADGE);
+  assert.ok(out && out.body, "không patch badge");
+  const fr = gframes(Buffer.from(out.body));
+  assert.strictEqual(fr.length, 1);
+  assert.strictEqual(fr[0].flag, 0x00);
+  assert.strictEqual(one(decode(fr[0].payload), 1).v, 1, "enum chưa lên premium");
+});
+
+test("gRPC: badge trả 2 -> giữ nguyên (không đè badge khác)", () => {
+  const out = runResponse(gframe(0x00, cat(fVarint(1, 2))), URL_BADGE);
+  assert.ok(!out || !out.body, "sửa bừa badge không phải free");
+});
+
+test("gRPC: pam string 'Spotify Free' -> 'Spotify Premium', length prefix đúng", () => {
+  const inner = cat(fStr(1, "catalogue"), fStr(2, "Spotify Free"));
+  const out = runResponse(gframe(0x00, inner), URL_PLAN);
+  assert.ok(out && out.body);
+  const fr = gframes(Buffer.from(out.body));
+  const fields = decode(fr[0].payload);
+  assert.strictEqual(one(fields, 2).p.toString("utf8"), "Spotify Premium");
+});
+
+test("gRPC: nhiều khung — trailer 0x80 giữ nguyên từng byte", () => {
+  const trailer = Buffer.from("grpc-status: 0\r\n", "utf8");
+  const body = Buffer.concat([gframe(0x00, cat(fStr(1, "type"), fStr(2, "free"))), gframe(0x80, trailer)]);
+  const out = runResponse(body, URL_PLAN);
+  assert.ok(out && out.body);
+  const fr = gframes(Buffer.from(out.body));
+  assert.strictEqual(fr.length, 2);
+  assert.strictEqual(fr[0].payload.toString("utf8").indexOf("premium") >= 0, true);
+  assert.strictEqual(fr[1].flag, 0x80);
+  assert.ok(fr[1].payload.equals(trailer), "trailer bị đụng");
+});
+
+test("gRPC: GetRestrictedIntegrations -> message rỗng (hết khoá Blend/Jam/Mix)", () => {
+  const inner = cat(fStr(1, "BLEND"), fStr(1, "JAM"), fBytes(2, cat(fStr(1, "MIX"))));
+  const out = runResponse(gframe(0x00, inner), URL_RESTRICT);
+  assert.ok(out && out.body, "không patch restrictions");
+  const fr = gframes(Buffer.from(out.body));
+  assert.strictEqual(fr[0].payload.length, 0, "chưa xoá danh sách khoá");
+});
+
+test("gRPC: playback-settings quality NORMAL -> VERY_HIGH", () => {
+  const pair = cat(fStr(1, "audio_quality"), fStr(2, "NORMAL"));
+  const inner = cat(fBytes(1, pair));
+  const out = runResponse(gframe(0x00, inner), URL_SETTINGS);
+  assert.ok(out && out.body, "không patch chất lượng");
+  const fr = gframes(Buffer.from(out.body));
+  const entry = decode(one(decode(fr[0].payload), 1).p);
+  assert.strictEqual(one(entry, 1).p.toString("utf8"), "audio_quality");
+  assert.strictEqual(one(entry, 2).p.toString("utf8"), "VERY_HIGH");
+});
+
+test("gRPC: playback-settings key khác quality -> không đụng", () => {
+  const pair = cat(fStr(1, "crossfade_seconds"), fStr(2, "NORMAL"));
+  const out = runResponse(gframe(0x00, cat(fBytes(1, pair))), URL_SETTINGS);
+  assert.ok(!out || !out.body, "sửa bừa cài đặt không liên quan");
+});
+
+test("JSON: GetPremiumPlanRow trả 'Spotify Free' -> 'Spotify Premium'", () => {
+  const body = Buffer.from(JSON.stringify({ rows: [{ name: "Spotify Free", price: "0" }] }));
+  const out = runResponse(body, URL_PLANROW);
+  assert.ok(out && out.body);
+  const o = JSON.parse(Buffer.from(out.body).toString("utf8"));
+  assert.strictEqual(o.rows[0].name, "Spotify Premium");
+});
+
+test("module pattern khớp 3 họ endpoint mới (pam / settings / restrictions)", () => {
+  const mod = fs.readFileSync(MODULE_FILE, "utf8");
+  const line = mod.split("\n").filter((l) => l.indexOf("type=http-response") >= 0)[0];
+  const raw = line.match(/pattern=([^,]+)/)[1];
+  const re = new RegExp(raw, "i");
+  for (const u of [URL_BADGE, URL_PLAN, URL_PLANROW, URL_SETTINGS, URL_RESTRICT]) {
+    assert.ok(re.test(u), "pattern không khớp: " + u);
+  }
+  assert.ok(!re.test("https://gae2-spclient.spotify.com/playplay/v1/key/abc"), "pattern bắt nhầm playplay");
+});
+
+console.log("\n[8] Module DEBUG\n");
 
 test("module DEBUG + debug.js tồn tại, script-path trỏ đúng file", () => {
   const p = path.join(ROOT, "spotify-vn-premium-DEBUG.module");

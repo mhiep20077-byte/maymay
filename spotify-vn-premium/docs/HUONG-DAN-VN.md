@@ -109,6 +109,17 @@ Thử mấy cái này, nếu nó **không** hoạt động thì module đang đ�
 
 ---
 
+## Bước 4c (v2.2) — v2.1 cài rồi vẫn Free / vẫn khoá chất lượng / không có nút Phối
+
+Nguyên nhân đã chốt bằng log proxy thật (không đoán): pattern của v2.1 **không khớp**
+`pam-view-service`, `playback-settings`, `clientrestrictions` — đúng 3 họ endpoint mà client
+9.2.x dùng để quyết định Premium. Ngoài ra 3 họ này trả gRPC khung 5 byte nên phải bóc khung
+trước khi patch. Đọc `docs/V2.2-PAM-EVIDENCE.md`.
+
+Sau khi cài v2.2 **bắt buộc** đăng xuất/đăng nhập lại Spotify (PAM cache trong keychain).
+Vẫn Free thì chạy `spotify-vn-premium-DEBUG.module`, mở trang Tài khoản 1 lần, gửi các dòng
+`[spot-vn-dbg]` có `HAS_FREE`.
+
 ## Bước 4b (v2.1) — Vẫn hiện "Gói của bạn: Spotify Free" / còn badge Premium / nút Phối bị khoá
 
 3 thứ này **không** đọc từ 4 endpoint mà v2 patch. Chúng đọc từ **product state**.

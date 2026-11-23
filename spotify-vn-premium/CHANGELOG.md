@@ -1,5 +1,53 @@
 # Changelog
 
+## v2.2.0 — 2026-11-24
+
+### Vì sao v2.1 không có tác dụng (bằng chứng từ log proxy thật, 550 request)
+
+Log của client `iphone-9.2.2.2587` cho thấy:
+
+| Endpoint | Số lần | v2.1 có bắt? |
+|---|---|---|
+| `pam-view-service/…/GetYourPremiumBadge` | 9 | ❌ không |
+| `pam-view-service/…/GetPlanOverview` | 2 | ❌ không |
+| `pam-view-service/v1/GetPremiumPlanRow?locale=vi` | 1 | ❌ không |
+| `playback-settings/…/GetAllStoredContentValues` + `GetDeviceSettings` | 3 | ❌ không |
+| `spotify.clientrestrictions…/GetRestrictedIntegrations` | 1 | ❌ không |
+| `product-state` (endpoint v2.1 nhắm tới) | **0** | — client không còn gọi |
+
+Nên: pattern của module không khớp → script không chạy lần nào trên 3 họ endpoint quyết định
+trạng thái Premium. Đó là toàn bộ lý do "Gói của bạn: Spotify Free", badge Premium ở trang
+chất lượng và nút Phối vẫn khoá.
+
+### Sửa
+
+1. **Bóc khung gRPC** — 3 họ endpoint trên trả `[flag][len 4B][payload]`, không phải protobuf trần.
+   v2.1 gọi `parse()` lên cả khung → luôn null → không patch. Giờ tách khung, patch từng khung
+   data (`0x00`), giữ nguyên byte khung trailer (`0x80`), ghép lại đúng độ dài.
+2. **PAM** — `GetYourPremiumBadge` trả message tí xíu toàn varint: enum `0` = free → nâng `0 → 1`
+   (chỉ khi message toàn varint ≤ 8, đúng hình dạng badge; badge khác giữ nguyên).
+   Chuỗi `Spotify Free / free_tier / Spotify_Free` → `Spotify Premium`.
+3. **clientrestrictions** — `GetRestrictedIntegrations` trả message rỗng = "không khoá gì"
+   → nút Phối / Blend / Jam không còn bị chặn theo tier.
+4. **playback-settings** — cặp `(key chứa quality/bitrate, value)` ép về `VERY_HIGH`
+   ở cả `GetAllStoredContentValues` và `GetDeviceSettings`.
+5. **JSON** — `GetPremiumPlanRow` (REST, `?locale=vi`) đổi literal `Spotify Free` → `Spotify Premium`
+   ở bất kỳ key nào (trước đây chỉ đổi khi key tên product/plan).
+6. **DEBUG v1.2** — bóc khung rồi in 16 byte đầu của payload + cờ `HAS_FREE`, thay vì in 12 byte
+   đầu của cả khung (toàn số khung, vô dụng).
+
+### Test
+
+`51/51 PASS`. Thêm 9 test: khung gRPC 1 khung / nhiều khung / trailer nguyên byte, badge enum,
+PAM string re-length, restrictions rỗng, quality pair (và không đụng setting khác),
+plan-row JSON, pattern module khớp 3 họ endpoint mới.
+
+### Vẫn không làm được (server quyết, không phải client)
+
+- Tải offline: server cấp license theo tier thật.
+- 320 kbps thật: `storage-resolve` trả file theo `product=0`, byte nhạc do server chọn.
+
+
 ## v2.1.0 — 2026-11-24
 
 Trả lời đúng 3 thứ còn thiếu sau v2 (ads/skip/on-demand đã OK):

@@ -98,6 +98,8 @@ skip do app đếm. Cái gì server đếm thì thua.
 
 ---
 
+## 5c. gRPC + PAM (v2.2) — xem `docs/V2.2-PAM-EVIDENCE.md`
+
 ## 5b. Product state (v2.1) — vì sao quét cấu trúc thay vì field number
 
 Tên gói hiển thị ("Gói của bạn: Spotify Free"), badge Premium ở trang chất lượng nhạc,

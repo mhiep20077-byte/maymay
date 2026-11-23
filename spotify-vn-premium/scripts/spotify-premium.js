@@ -339,6 +339,58 @@
     return true;
   };
 
+  // ------------------------------------------------------------------ gRPC
+  //
+  // pam-view-service / playback-settings / clientrestrictions KHÔNG trả JSON,
+  // cũng không trả protobuf trần — chúng trả gRPC khung 5 byte:
+  //     [flag 1B][length 4B big-endian][payload ...]
+  // flag 0x00 = data (protobuf), 0x80 = trailer (header text, KHÔNG đụng vào).
+  //
+  // v2.1 không bóc khung: parse() nhận 5 byte đầu là rác -> trả null -> patch
+  // không chạy. Đó là lý do "Gói của bạn: Spotify Free", badge Premium ở
+  // trang chất lượng, nút Phối vẫn y nguyên sau khi cài module.
+  function grpcSplit(b) {
+    if (!b || b.length < 6) return null;
+    const frames = [];
+    let i = 0;
+    while (i + 5 <= b.length) {
+      const flag = b[i];
+      if (flag !== 0x00 && flag !== 0x01 && flag !== 0x80 && flag !== 0x81) return null;
+      const len = ((b[i + 1] << 24) | (b[i + 2] << 16) | (b[i + 3] << 8) | b[i + 4]) >>> 0;
+      if (len > b.length - i - 5) return null;
+      frames.push({ flag: flag, payload: b.subarray(i + 5, i + 5 + len) });
+      i += 5 + len;
+    }
+    if (i !== b.length || !frames.length) return null;
+    return frames;
+  }
+
+  function grpcJoin(frames) {
+    let size = 0;
+    for (const f of frames) size += 5 + f.payload.length;
+    const out = new Uint8Array(size);
+    let at = 0;
+    for (const f of frames) {
+      const n = f.payload.length;
+      out[at] = f.flag;
+      out[at + 1] = (n >>> 24) & 0xff;
+      out[at + 2] = (n >>> 16) & 0xff;
+      out[at + 3] = (n >>> 8) & 0xff;
+      out[at + 4] = n & 0xff;
+      out.set(f.payload, at + 5);
+      at += 5 + n;
+    }
+    return out;
+  }
+
+  let ctype = "";
+  const respHeaders = ($response && ($response.headers || $response.responseHeaders)) || {};
+  for (const k in respHeaders) {
+    if (!Object.prototype.hasOwnProperty.call(respHeaders, k)) continue;
+    if (k.toLowerCase() === "content-type") ctype = String(respHeaders[k]).toLowerCase();
+  }
+  const grpcFrames = grpcSplit(body);
+
   const RULES = [
     ["ios-feature-settings","crossfade_enabled",2,1,"","misc"],
     ["ios-feature-settings","automix_enabled",2,1,"","misc"],
@@ -840,13 +892,23 @@
     Free: "Premium",
     "free-tier": "premium",
     free_tier: "premium",
+    "FREE_TIER": "PREMIUM",
+    "Free Tier": "Premium",
+    "free tier": "premium",
     "spotify-free": "Spotify Premium",
-    spotify_free: "Spotify Premium"
+    spotify_free: "Spotify Premium",
+    "Spotify Free": "Spotify Premium",
+    "SPOTIFY_FREE": "SPOTIFY_PREMIUM",
+    "spotify free": "Spotify Premium",
+    "Free account": "Premium account",
+    "free_account": "premium",
+    "FREE_ACCOUNT": "PREMIUM"
   };
 
-  const PRODUCT_KEY = /^(?:product|product_?state|product_?type|product_?name|product_?id|plan|plan_?type|plan_?name|account_?type|account_?plan|subscription|subscription_?type|subscription_?plan|subscription_?name|tier|sub_?tier|catalogue|catalog|product_?catalogue|membership|membership_?type|pricing_?plan|product_?level|type)$/i;
+  const PRODUCT_KEY = /^(?:product|product_?state|product_?type|product_?name|product_?id|plan|plan_?type|plan_?name|plan_?title|account_?type|account_?plan|account_?tier|subscription|subscription_?type|subscription_?plan|subscription_?name|tier|sub_?tier|catalogue|catalog|product_?catalogue|membership|membership_?type|pricing_?plan|product_?level|badge|badge_?type|current_?plan|plan_?title|type)$/i;
   const PREMIUM_FLAG_KEY = /^(?:is_?premium|is_?premium_?user|is_?premium_?account|premium|premium_?user|has_?premium|is_?subscribed|subscribed|is_?paid|paid_?user)$/i;
   const AD_FLAG_KEY = /^(?:ads|has_?ads|show_?ads|is_?ad_?supported|ad_?supported|ads_?enabled)$/i;
+  const SPOTIFY_FREE_LITERAL = /^\s*spotify[\s_-]*free\s*$/i;
 
   function decodeUtf8(bytes) {
     try {
@@ -877,6 +939,10 @@
         if (typeof v === "string") {
           if (PRODUCT_KEY.test(k) && Object.prototype.hasOwnProperty.call(FREE_MAP, v)) {
             node[k] = FREE_MAP[v];
+            changed = true;
+          } else if (SPOTIFY_FREE_LITERAL.test(v)) {
+            // "Spotify Free" là tên sản phẩm, không phải enum: đổi ở bất kỳ key nào.
+            node[k] = "Spotify Premium";
             changed = true;
           }
         } else if (typeof v === "boolean") {
@@ -946,25 +1012,168 @@
   const patchCustomize = (b) => edit(b, [1], patchUcs);
   const patchBootstrap = (b) => edit(b, [2, 1, 1, 1], patchUcs);
 
+  // ------------------------------------------------------- PAM (v2.2.0)
+  //
+  // Log thật của client 9.2.2 cho thấy state "Free" KHÔNG đi qua product-state
+  // (endpoint đó không còn được gọi lần nào). Nó đi qua PAM:
+  //   /pam-view-service/spotify.pam.v2.PamViewService/GetYourPremiumBadge  (9 lần)
+  //   /pam-view-service/spotify.pam.v2.PamViewService/GetPlanOverview      (2 lần)
+  //   /pam-view-service/v1/GetPremiumPlanRow?locale=vi                     (JSON)
+  //
+  // GetYourPremiumBadge trả về message tí xíu chỉ có enum: 0 = free.
+  // Không đoán field number của message lớn, chỉ nâng enum 0 -> 1 khi message
+  // toàn varint nhỏ (<= 8) — đúng hình dạng của response badge.
+  function boostEnum(b) {
+    if (!b.length || b.length > 64) return null;
+    const fields = parse(b);
+    if (!fields || !fields.length || fields.length > 8) return null;
+    for (const f of fields) if (f.w !== 0 || f.v > 8) return null;
+    let changed = false;
+    for (const f of fields) {
+      if (f.v === 0) {
+        f.v = 1;
+        changed = true;
+      }
+    }
+    return changed ? serialize(fields) : null;
+  }
+
+  function patchPam(b) {
+    if (b.length && (b[0] === 0x7b || b[0] === 0x5b)) {
+      const s = decodeUtf8(b);
+      if (s !== null) {
+        const o = patchJsonProduct(s);
+        if (o) return TE.encode(o);
+      }
+      return null;
+    }
+    return patchUniversal(b) || boostEnum(b);
+  }
+
+  // ------------------------------------------- client restrictions (v2.2.0)
+  //
+  // /spotify.clientrestrictions.v1.ClientRestrictionsService/GetRestrictedIntegrations
+  // trả danh sách tính năng bị khoá theo tier (Blend / Jam / Mix / social...).
+  // Message rỗng = "không khoá gì" -> nút Phối/Jam không còn bị premium chặn.
+  // Chỉ làm khi body parse được như protobuf; JSON để nguyên.
+  function patchRestrictions(b) {
+    if (!b.length) return null;
+    if (b[0] === 0x7b || b[0] === 0x5b) return null;
+    if (!parse(b)) return null;
+    return new Uint8Array(0);
+  }
+
+  // --------------------------------------------- playback settings (v2.2.0)
+  //
+  // /playback-settings/.../GetAllStoredContentValues + GetDeviceSettings chứa
+  // mức chất lượng đang lưu; WriteContentValue là app ghi mức mới. Khoá Premium
+  // ở trang Chất lượng đọc từ đây. Ép mọi cặp (key chứa quality/bitrate) về
+  // VERY_HIGH — cả lúc đọc lẫn lúc ghi, để UI và trình phát khớp nhau.
+  const QUALITY_KEY = /(?:quality|bitrate|bit_rate|streaming_?level|audio_?format)/i;
+  const QUALITY_MAX = "VERY_HIGH";
+  const QUALITY_VALUES = ["AUTOMATIC", "LOW", "NORMAL", "HIGH", "VERY_HIGH", "MEDIUM"];
+
+  function setQualityPairs(fields, depth) {
+    if (depth > 6) return false;
+    let changed = false;
+    for (const f of fields) {
+      if (f.w !== 2 || !f.p || !f.p.length) continue;
+      const inner = parse(f.p);
+      if (!inner || !inner.length) continue;
+      let local = setQualityPairs(inner, depth + 1);
+      const k = first(inner, 1);
+      const v = first(inner, 2);
+      const ks = k ? text(k) : null;
+      if (ks && v && v.w === 2 && QUALITY_KEY.test(ks)) {
+        const vs = text(v);
+        if (vs !== null && vs !== QUALITY_MAX && vs.length <= 32) {
+          v.p = TE.encode(QUALITY_MAX);
+          local = true;
+        }
+      }
+      if (local) {
+        f.p = serialize(inner);
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
+  function setQualityJson(str) {
+    let root;
+    try {
+      root = JSON.parse(str);
+    } catch (e) {
+      return null;
+    }
+    let changed = false;
+    const walk = (node) => {
+      if (Array.isArray(node)) {
+        for (const v of node) walk(v);
+        return;
+      }
+      if (!node || typeof node !== "object") return;
+      for (const k of Object.keys(node)) {
+        const v = node[k];
+        if (typeof v === "string") {
+          if (QUALITY_KEY.test(k) && QUALITY_VALUES.indexOf(v.toUpperCase()) >= 0 && v !== QUALITY_MAX) {
+            node[k] = QUALITY_MAX;
+            changed = true;
+          }
+        } else walk(v);
+      }
+    };
+    walk(root);
+    return changed ? JSON.stringify(root) : null;
+  }
+
+  function patchSettings(b) {
+    if (b.length && (b[0] === 0x7b || b[0] === 0x5b)) {
+      const s = decodeUtf8(b);
+      if (s === null) return null;
+      const o = setQualityJson(s);
+      return o ? TE.encode(o) : null;
+    }
+    const fields = parse(b);
+    if (!fields || !fields.length) return null;
+    if (!setQualityPairs(fields, 0)) return null;
+    return serialize(fields);
+  }
+
   // ------------------------------------------------------------------- entry
 
-  // Thứ tự thử: đúng endpoint trước, rồi mới thử các layout khác.
+  const isPam = /(?:pam-view-service|pam\.v2|PamViewService|pam-account)/i.test(url);
+  const isRestrict = /(?:clientrestrictions|GetRestrictedIntegrations)/i.test(url);
+  const isSettings = /playback-settings/i.test(url);
+
   // Mọi hàm patch đều trả null khi không nhận ra -> $done({}) = body nguyên bản.
-  let out = null;
-  if (url.indexOf("bootstrap") >= 0) {
-    out = patchBootstrap(body) || patchCustomize(body) || patchUniversal(body);
-  } else if (url.indexOf("user-customization-service") >= 0) {
-    out = patchCustomize(body) || patchBootstrap(body) || patchUniversal(body);
-  } else if (url.indexOf("nebula") >= 0) {
-    // /nebula/v1/configuration/attributes — chuỗi AccountAttribute ở gốc message.
-    out = patchAttributesStrict(body) || patchUniversal(body);
-  } else if (url.indexOf("remote-config-resolver") >= 0) {
-    // /remote-config-resolver/v3/configuration — AssignedValue ở gốc message.
-    out = patchConfigurationStrict(body) || patchUniversal(body);
-  } else {
+  function patchOne(b) {
+    if (isRestrict) return patchRestrictions(b);
+    if (isPam) return patchPam(b);
+    if (isSettings) return patchSettings(b);
+    if (url.indexOf("bootstrap") >= 0) return patchBootstrap(b) || patchCustomize(b) || patchUniversal(b);
+    if (url.indexOf("user-customization-service") >= 0) return patchCustomize(b) || patchBootstrap(b) || patchUniversal(b);
+    if (url.indexOf("nebula") >= 0) return patchAttributesStrict(b) || patchUniversal(b);
+    if (url.indexOf("remote-config-resolver") >= 0) return patchConfigurationStrict(b) || patchUniversal(b);
     // product-state / user-profile / account / device-capabilities / login5...
-    // Không đoán field number nữa: quét cấu trúc, gặp "free" thì đổi.
-    out = patchUniversal(body);
+    return patchUniversal(b);
+  }
+
+  let out = null;
+  if (grpcFrames) {
+    let changed = false;
+    for (const f of grpcFrames) {
+      // 0x80 = trailer (header text), bit 0 = nén -> không đụng, không reframe.
+      if (f.flag & 0x80 || f.flag & 0x01) continue;
+      const np = patchOne(f.payload);
+      if (np && !same(np, f.payload)) {
+        f.payload = np;
+        changed = true;
+      }
+    }
+    out = changed ? grpcJoin(grpcFrames) : null;
+  } else {
+    out = patchOne(body);
   }
 
   if (!out || same(out, body)) {

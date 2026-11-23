@@ -7,7 +7,7 @@ Module **Shadowrocket (小火箭)** gộp: bỏ quảng cáo + mở khoá Premiu
 > (script còn sống, chạy được) + phần chống 304 / chặn HTTP/3 mà bản đó thiếu.
 > Logic patch giữ nguyên gốc — tao chỉ thêm phần hạ tầng và test để biết nó thật sự chạy.
 
-![test](https://img.shields.io/badge/test-42%2F42%20pass-brightgreen)
+![test](https://img.shields.io/badge/test-51%2F51%20pass-brightgreen)
 
 ---
 
@@ -15,7 +15,7 @@ Module **Shadowrocket (小火箭)** gộp: bỏ quảng cáo + mở khoá Premiu
 
 ```
 bash tools/test.sh
-→ PASS: 42    FAIL: 0
+→ PASS: 51    FAIL: 0
 ```
 
 Test dựng protobuf giả đúng layout thật của Spotify rồi decode kết quả ra so từng field, gồm:
@@ -34,6 +34,20 @@ Bản 9.2.x không còn gọi `bootstrap`: 91% API đi qua shard `gae2-spclient.
 v1 vừa dùng wildcard MITM sai (`*-spclient…`) vừa nhắm sai endpoint → patch không chạy byte nào.
 v2 sửa cả hai + thêm rule chặn quảng cáo theo URL. Đọc `docs/CHAN-DOAN-V2.md` trước khi test.
 
+
+### v2.2.0 — vì sao v2.1 vẫn Free (đã chốt bằng log thật)
+
+Log proxy 550 request của client 9.2.2 cho thấy state Premium đi qua **3 họ endpoint v2.1 không bắt**:
+`pam-view-service` (`GetYourPremiumBadge` 9×, `GetPlanOverview` 2×, `GetPremiumPlanRow` 1×),
+`playback-settings` (8×) và `clientrestrictions/GetRestrictedIntegrations` (1×).
+`product-state` — endpoint v2.1 nhắm tới — **không được gọi lần nào**.
+
+Thêm nữa 3 họ đó trả **gRPC khung 5 byte**, không phải protobuf trần → v2.1 parse null → không patch.
+
+v2.2 bóc khung gRPC, patch từng khung data, giữ nguyên trailer, rồi:
+nâng enum badge `0→1`, đổi `Spotify Free → Spotify Premium`, trả message rỗng cho
+`GetRestrictedIntegrations` (hết khoá Phối/Blend/Jam), ép chất lượng về `VERY_HIGH`.
+Chi tiết: `docs/V2.2-PAM-EVIDENCE.md`.
 
 ### v2.1.0 — trang Tài khoản vẫn hiện "Spotify Free"
 Ads / skip / on-demand đã xong ở v2, nhưng **tên gói** và **badge Premium** đọc từ **product state**,
@@ -85,7 +99,7 @@ cd spotify-vn-premium
 # 1) trỏ module về repo của mày (thay user/repo/branch)
 bash tools/set-repo.sh <github-user> <repo> main
 
-# 2) test lại cho chắc (vẫn 42/42)
+# 2) test lại cho chắc (phải 51/51)
 bash tools/test.sh
 
 # 3) tạo repo trên GitHub rồi push
