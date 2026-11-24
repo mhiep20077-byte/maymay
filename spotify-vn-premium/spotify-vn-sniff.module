@@ -1,0 +1,12 @@
+#!name=Spotify VN Sniff (Bat goi sach)
+#!desc=Module bat goi tin SACH 100% chuan Shadowrocket (khong Rule/QUIC gay loi mang). Chi bat 3 nhom: Chat luong rat cao, Ho so Premium va Quan ly goi. Hien thong bao banner tren Shadowrocket va ghi log [spot-sniff].
+#!category=Spotify
+#!author=ToCam
+#!homepage=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-premium
+
+[MITM]
+hostname = %APPEND% *.spotify.com
+
+[Script]
+SpotVN_Sniff_Req = type=http-request,pattern=^https://.*spotify\.com/,script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-premium/scripts/sniff-clean.js
+SpotVN_Sniff_Res = type=http-response,pattern=^https://.*spotify\.com/,script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-premium/scripts/sniff-clean.js,requires-body=true,max-size=524288
