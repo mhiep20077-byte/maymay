@@ -1071,6 +1071,7 @@
   // vì đổi màu chữ lệch tương phản là viên badge thành không đọc được.
   const TEXT_COLOR_KEY =
     /(?:text_?colou?r|textcolou?r|foreground_?colou?r|label_?colou?r|title_?colou?r|font_?colou?r)$/i;
+  const STYLE_KEY = /^(?:style|badge_?style|pill_?style|type|badge_?type)$/i;
   const PLAN_WORD = /^(?:spotify\s*_?\s*)?(?:premium|free)$/i;
   const PREMIUM_WORD = /^(?:spotify\s*_?\s*)?premium$/i;
   const BADGE_ONLY = /^(?:premium|spotify\s*premium|spotify\s*premium\s*plan)$/i;
@@ -1079,6 +1080,10 @@
   const GREEN_HEX = /#?(?:1ed760|1db954|1fdf64|1aa34a|158a3f|2ebd59|30d158|1ed75f)/gi;
   const GREEN_RGB = /rgba?\(\s*30\s*,\s*215\s*,\s*96\s*(?:,\s*[\d.]+\s*)?\)/gi;
   const GREEN_0X = /0x(?:ff)?(?:1ed760|1db954|1fdf64)/gi;
+  const GREY_HEX = /#?(?:535353|6a6a6a|7f7f7f|808080|282828|333333|b3b3b3|121212|404040|a0a0a0|666666|999999|cccccc|grey|gray)/i;
+  const GREY_RGB = /rgba?\(\s*(?:83|106|127|128|40|51|179|18|64)\s*,\s*(?:83|106|127|128|40|51|179|18|64)\s*,\s*(?:83|106|127|128|40|51|179|18|64)/i;
+  const VI_FREE_TITLE = /^\s*gói\s*của\s*bạn\s*$/i;
+  const EN_FREE_TITLE = /^\s*your\s*plan\s*$/i;
   const BADGE_HEX_BARE = BADGE_COLOR.replace(/^#/, "");
 
   function hexToRgb(hex) {
@@ -1107,12 +1112,21 @@
     if (!root || typeof root !== "object") return null;
     let changed = false;
 
-    const walk = (node) => {
+    const walk = (node, parentKey = "") => {
       if (Array.isArray(node)) {
-        for (const v of node) walk(v);
+        for (const v of node) walk(v, parentKey);
         return;
       }
       if (!node || typeof node !== "object") return;
+
+      const isBadgeNode =
+        BADGE_KEY.test(parentKey) ||
+        Object.keys(node).some(
+          (k) =>
+            BADGE_KEY.test(k) ||
+            ((k === "text" || k === "label") && (PLAN_WORD.test(String(node[k])) || String(node[k]) === BADGE_TEXT))
+        );
+
       for (const k of Object.keys(node)) {
         const v = node[k];
         if (typeof v === "string") {
@@ -1121,20 +1135,34 @@
           const colorValue = hasHash ? BADGE_COLOR : has0x ? "0x" + BADGE_HEX_BARE.toUpperCase() : BADGE_HEX_BARE;
           const tv = v.trim();
           const isGreen = new RegExp(GREEN_HEX.source, "i").test(v);
+          const isGrey = GREY_HEX.test(v) || GREY_RGB.test(v);
           let nv = v;
-          if (TEXT_COLOR_KEY.test(k)) {
+          if (VI_FREE_TITLE.test(tv)) {
+            nv = "Gói Premium của bạn";
+          } else if (EN_FREE_TITLE.test(tv)) {
+            nv = "Your Premium plan";
+          } else if (TEXT_COLOR_KEY.test(k)) {
             // Màu chữ: chỉ đổi khi người dùng đặt badge_text_color. Không đặt
             // thì để nguyên, vì tô cam cả nền lẫn chữ là viên badge mất chữ.
             if (BADGE_TEXT_COLOR && isGreen) nv = BADGE_TEXT_COLOR;
-          } else if (BADGE_KEY.test(k) && PLAN_WORD.test(tv)) nv = BADGE_TEXT;
-          else if (LABEL_KEY.test(k) && PREMIUM_WORD.test(tv)) nv = BADGE_TEXT;
-          else if (COLOR_KEY.test(k) && isGreen) nv = colorValue;
-          else nv = recolor(v);
+          } else if ((BADGE_KEY.test(k) || (isBadgeNode && (k === "text" || k === "label"))) && PLAN_WORD.test(tv)) {
+            nv = BADGE_TEXT;
+          } else if (LABEL_KEY.test(k) && PREMIUM_WORD.test(tv)) {
+            nv = BADGE_TEXT;
+          } else if (COLOR_KEY.test(k) && (isGreen || isGrey || isBadgeNode)) {
+            nv = /^rgba?\(/i.test(v) ? BADGE_RGB : colorValue;
+          } else if (STYLE_KEY.test(k) && isBadgeNode && /^(?:secondary|neutral|free|default)$/i.test(tv)) {
+            nv = "primary";
+          } else {
+            nv = recolor(v);
+          }
           if (nv !== v) {
             node[k] = nv;
             changed = true;
           }
-        } else walk(v);
+        } else {
+          walk(v, k);
+        }
       }
     };
 
@@ -1151,9 +1179,12 @@
       // ngắn. Tránh trường hợp chuỗi ASCII tình cờ parse ra protobuf hợp lệ.
       if (f.p.length <= 64) {
         const s = decodeUtf8(f.p);
-        if (s !== null && /^[\x20-\x7e]+$/.test(s)) {
-          let nv = BADGE_ONLY.test(s) ? BADGE_TEXT : s;
-          nv = recolor(nv);
+        if (s !== null) {
+          let nv = s;
+          if (BADGE_ONLY.test(s)) nv = BADGE_TEXT;
+          else if (VI_FREE_TITLE.test(s)) nv = "Gói Premium của bạn";
+          else if (EN_FREE_TITLE.test(s)) nv = "Your Premium plan";
+          else nv = recolor(nv);
           if (nv !== s) {
             f.p = TE.encode(nv);
             changed = true;

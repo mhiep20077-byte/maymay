@@ -1013,6 +1013,25 @@ test("debug.js v1.4: mac dinh khong tu noi thong bao", () => {
   assert.strictEqual(notified, 0, "debug.js tu keu khi chua bat notify");
 });
 
+test("JSON: badge mau xam (#535353) -> ep thanh nhan ToCam nen xanh la #1ED760", () => {
+  const body = Buffer.from(JSON.stringify({ badge: { text: "Free", color: "#535353", background: "535353" } }));
+  const out = runResponse(body, URL_PLANROW);
+  assert.ok(out && out.body, "khong patch badge xam");
+  const o = JSON.parse(Buffer.from(out.body).toString("utf8"));
+  assert.strictEqual(o.badge.text, "ToCam");
+  assert.strictEqual(o.badge.color, "#1ED760");
+  assert.strictEqual(o.badge.background, "1ED760");
+});
+
+test("JSON: tieu de tieng Viet 'Goi cua ban' -> 'Goi Premium cua ban'", () => {
+  const body = Buffer.from(JSON.stringify({ title: "Gói của bạn", badge: { text: "Premium" } }));
+  const out = runResponse(body, URL_PLANROW);
+  assert.ok(out && out.body, "khong patch tieu de");
+  const o = JSON.parse(Buffer.from(out.body).toString("utf8"));
+  assert.strictEqual(o.title, "Gói Premium của bạn");
+  assert.strictEqual(o.badge.text, "ToCam");
+});
+
 console.log("\n" + "-".repeat(62));
 console.log("  PASS: " + pass + "    FAIL: " + fail);
 console.log("-".repeat(62) + "\n");
