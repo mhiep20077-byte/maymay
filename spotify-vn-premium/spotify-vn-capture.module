@@ -1,5 +1,5 @@
-#!name=Spotify VN CAPTURE (bắt gói + thông báo)
-#!desc=Module chẩn đoán có THÔNG BÁO: mỗi response Spotify khớp pattern sẽ nổi banner trên máy (như thông báo của Script). Nội dung banner in endpoint + chuỗi quality/bitrate/premium/restrict bên trong payload, để biết app hỏi gì mà trang "Chất lượng nội dung" vẫn khoá. KHÔNG sửa gì, chỉ đọc. Bật module này THAY module chính, mở trang Chất lượng nội dung + trang Tài khoản 1 lần, rồi gửi lại các banner/dòng [spot-vn-dbg].
+#!name=Spotify VN CAPTURE (chỉ bắt gói + thông báo)
+#!desc=Bản RIÊNG để chẩn đoán: KHÔNG sửa gì, chỉ đọc. Mỗi response Spotify nổi banner trên máy (endpoint · HTTP · dung lượng · cờ 96/160/320 · premium/free · q=), đồng thời gom body thật bơm vào URL của request kế tiếp (zcap=) nên nằm trong log .db mày xuất ra. Dùng khi muốn xem app nhận đúng cái gì mà trang Chất lượng vẫn khoá.
 #!category=Spotify
 #!author=Zaka
 #!homepage=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-premium
@@ -8,8 +8,10 @@
 [Rule]
 AND,((DOMAIN-SUFFIX,spotify.com),(PROTOCOL,UDP)),REJECT
 
-[Script]
-SpotifyVN Capture = type=http-response,pattern=^https:\/\/[a-z0-9.-]*spotify\.com(?::443)?\/(?:bootstrap|user-customization-service|nebula|remote-config-resolver|device-capabilities|identity|pam-view-service|playback-settings|clientrestrictions|user-profile|profile|account|product-state|product_state|subscription|attributes|catalogue|premium|checkout|payment|settings|capabilities|v3\/login|me(?:\/|\?|$)),script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-premium/scripts/capture.js,requires-body=true,binary-body-mode=true,max-size=1048576,timeout=20
-
 [MITM]
 hostname = %APPEND% *.spotify.com, spotify.com
+
+[Script]
+SpotifyVN Capture = type=http-response,pattern=^https:\/\/(?:[a-z0-9-]+\.)*spotify\.com(?::443)?\/(?!storage-resolve\/v2\/files\/audio\/(?:interactive|interactive_prefetch)\/\d)(?:.|\n)*,script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-premium/scripts/capture.js,requires-body=true,binary-body-mode=true,max-size=2097152,timeout=30
+
+SpotifyVN Drip = type=http-request,pattern=^https:\/\/(?:[a-z0-9-]+\.)*spotify\.com(?::443)?\/(?:gabo-receiver-service|reachability\/check|color-lyrics|gander\/v2|collection\/v2|net-fortune\/v2\/fortune|apresolve),script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-premium/scripts/drip.js,timeout=15

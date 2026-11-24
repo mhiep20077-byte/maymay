@@ -21,6 +21,16 @@ const assert = require("assert");
 const ROOT = path.resolve(__dirname, "..");
 const SCRIPT_RESPONSE = path.join(ROOT, "scripts", "spotify-premium.js");
 const SCRIPT_REQUEST = path.join(ROOT, "scripts", "spotify-request.js");
+// v2.6: module có nhiều entry http-response (capture + patch). Test pattern phải
+// lấy đúng entry của spotify-premium.js, không lấy entry capture.js.
+function mainResponsePattern(mod) {
+  const line = mod
+    .split("\n")
+    .filter((l) => l.indexOf("type=http-response") >= 0 && l.indexOf("spotify-premium.js") >= 0)[0];
+  if (!line) throw new Error("khong thay entry http-response cua spotify-premium.js");
+  return line.match(/pattern=([^,]+)/)[1];
+}
+
 const MODULE_FILE = path.join(ROOT, "spotify-vn-premium.module");
 
 let pass = 0;
@@ -444,7 +454,9 @@ test("MITM hostname dùng wildcard hợp lệ (không dùng *-spclient)", () => 
 
 test("pattern trong module khớp đúng URL thật lấy từ log (shard gae2)", () => {
   const mod = fs.readFileSync(MODULE_FILE, "utf8");
-  const all = [...mod.matchAll(/pattern=(\S+?),script-path=/g)].map((m) => new RegExp(m[1]));
+  const all = [...mod.matchAll(/pattern=(\S+?),script-path=(\S+?),/g)]
+    .filter((m) => !/capture\.js|drip\.js/.test(m[2]))
+    .map((m) => new RegExp(m[1]));
   assert.ok(all.length >= 2, "phải có ít nhất 2 script (request + response)");
   const real = [
     "https://gae2-spclient.spotify.com/remote-config-resolver/v3/configuration",
@@ -646,7 +658,7 @@ test("endpoint media (playplay/storage-resolve) -> script bỏ qua ngay", () => 
 test("module pattern khớp endpoint product-state / user-profile / login5", () => {
   const mod = fs.readFileSync(MODULE_FILE, "utf8");
   // lấy pattern của script response, bỏ escape về regex JS
-  const raw = mod.match(/type=http-response,pattern=([^,]+)/)[1];
+  const raw = mainResponsePattern(mod);
   const re = new RegExp(raw, "i");
   const urls = [
     "https://gae2-spclient.spotify.com/product-state/v1/product_state",
@@ -766,8 +778,7 @@ test("JSON: GetPremiumPlanRow trả 'Spotify Free' -> 'Spotify Premium'", () => 
 
 test("module pattern khớp 3 họ endpoint mới (pam / settings / restrictions)", () => {
   const mod = fs.readFileSync(MODULE_FILE, "utf8");
-  const line = mod.split("\n").filter((l) => l.indexOf("type=http-response") >= 0)[0];
-  const raw = line.match(/pattern=([^,]+)/)[1];
+  const raw = mainResponsePattern(mod);
   const re = new RegExp(raw, "i");
   for (const u of [URL_BADGE, URL_PLAN, URL_PLANROW, URL_SETTINGS, URL_RESTRICT]) {
     assert.ok(re.test(u), "pattern không khớp: " + u);
@@ -863,7 +874,8 @@ const SCRIPT_CAPTURE = path.join(ROOT, "scripts", "capture.js");
 function runCapture(body, url, arg, opts = {}) {
   const events = [];
   let captured = null;
-  const store = Object.assign({}, opts.store || {});
+  // v2.6: banner "CAPTURE ĐÃ CHẠY" chỉ nổ 1 lần -> seed cờ để test sạch.
+  const store = Object.assign({ spotcap_boot: "1" }, opts.store || {});
   const sandbox = {
     $request: { url, method: "GET", headers: {} },
     $response: { status: 200, body: new Uint8Array(body), headers: {} },
@@ -1218,9 +1230,9 @@ test("v2.5 module: co entry request cho audio level + entry response cho net-for
   assert.ok(resp && /device-capabilities/.test(resp), "Response pattern thieu device-capabilities");
 });
 
-test("v2.5 module: version string da len 2.5", () => {
+test("v2.6 module: version string da len 2.6", () => {
   const mod = fs.readFileSync(MODULE_FILE, "utf8");
-  assert.ok(/v2\.5/.test(mod.split("\n")[0]), mod.split("\n")[0]);
+  assert.ok(/v2\.6/.test(mod.split("\n")[0]), mod.split("\n")[0]);
 });
 
 console.log("\n" + "-".repeat(62));

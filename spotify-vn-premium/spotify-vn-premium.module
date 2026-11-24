@@ -1,12 +1,12 @@
-#!name=Spotify VN Premium v2.5
-#!desc=Bo ads + mo Premium phia may. v2.5 (doc tu log bat goi cua mot tai khoan CO Premium that): BO REJECT net-fortune (day la service CHON FILE nhac kem bitrate - chan no la tu bop chat luong), ep cap am thanh trong URL storage-resolve 0/1 -> 2, nang danh sach chat luong o device-capabilities, bat co Jam (nut Phoi nhac), badge nen xanh #1ED760 + chu den #121212 + chu "ToCam". Khong mo duoc offline/320kbps that vi license + file nhac do server cap theo tier. Muon xem app gui gi: cai them spotify-vn-capture.module.
+#!name=Spotify VN v2.6 (patch + bắt gói + thông báo)
+#!desc=v2.6: TẤT CẢ TRONG MỘT MODULE. (1) Patch như cũ: bo ads, ép cấp âm thanh 2 trong URL storage-resolve, nâng chất lượng ở device-capabilities/playback-settings/net-fortune, badge ToCam. (2) MỚI: mỗi response Spotify nổi THÔNG BÁO trên máy in endpoint + cờ 96/160/320 + premium/free. (3) MỚI: gom body thật rồi bơm vào query của request kế tiếp (zcap=) nên nằm luôn trong file log .db mày xuất ra — tao đọc được nguyên payload, khỏi đoán. Cài xong mở app là thấy banner "CAPTURE ĐÃ CHẠY".
 #!category=Spotify
-#!author=Script goc: xzavier-amico / lyc-000001 · dong goi + fix host: Zaka
+#!author=Script goc: xzavier-amico / lyc-000001 · dong goi + fix: Zaka
 #!homepage=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-premium
 #!icon=https://raw.githubusercontent.com/luestr/IconResource/main/App_icon/120px/Spotify.png
 
 [Rule]
-# --- 1. Chan domain quang cao (an toan, khong anh huong phat nhac) ---
+# --- Chan domain quang cao (khong anh huong phat nhac) ---
 DOMAIN-SUFFIX,ads.spotify.com,REJECT
 DOMAIN-SUFFIX,adeventtracker.spotify.com,REJECT
 DOMAIN-SUFFIX,aet.spotify.com,REJECT
@@ -18,32 +18,36 @@ DOMAIN-SUFFIX,tpc.googlesyndication.com,REJECT
 DOMAIN-SUFFIX,adservice.google.com,REJECT
 DOMAIN-SUFFIX,www.googletagservices.com,REJECT
 
-# --- 2. Chan endpoint quang cao nam CHUNG host voi API ---
-# v2.5: BO net-fortune ra khoi danh sach REJECT.
-# Ly do (bang chung tu log tai khoan Premium that, 276 request):
-#   /net-fortune/v2/fortune?bandwidth=7250555&request_type=interactive
-# la service CHON FILE nhac: client bao "toi co ~7Mbps", server tra danh sach
-# file kem bitrate/format. Chan no = app khong bao gio thay ban 320 -> tu roi
-# ve file mac dinh -> "chat luong rat cao" mai khong len duoc.
-# premium-marketing van chan (do la banner ban Premium, khong phai nhac).
+# --- Endpoint quang cao nam chung host voi API ---
+# net-fortune KHONG bi chan: do la service chon file nhac kem bitrate.
 URL-REGEX,^https?://[^/]*spotify\.com/(?:ads/v3|ad-logic|sponsoredplaylist|premium-marketing),REJECT
 
-# --- 3. Chan QUIC/UDP cua Spotify: HTTP/3 KHONG MITM duoc ---
-# Khong chan thi app di HTTP/3, script khong bao gio chay => "cai roi ma khong thay gi".
+# --- Chan QUIC/UDP: HTTP/3 khong MITM duoc => script khong chay ---
 AND,((DOMAIN-SUFFIX,spotify.com),(PROTOCOL,UDP)),REJECT
 
 [MITM]
 hostname = %APPEND% *.spotify.com, spotify.com
 
 [Script]
-# --- 4. Buoc REQUEST: ep cap am thanh trong URL (0/1 -> 2) ---
-# Cap am thanh nam trong DUONG DAN /storage-resolve/v2/files/audio/interactive/<cap>/<id>
-# nen script sua response khong voi toi. Phai doi URL truoc khi request di.
-# Muon tat: $argument {"audio_level":"keep"}
-SpotifyVN AudioLevel = type=http-request,pattern=^https:\/\/(?:[a-z0-9-]+\.)*spotify\.com(?::443)?\/storage-resolve\/v2\/files\/audio\/interactive\/,script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-premium/scripts/spotify-audio-level.js,timeout=10
+# ===========================================================================
+# 0) BẮT GÓI + THÔNG BÁO  (đặt trước để đọc body GỐC của server)
+#    Banner: [spot-vn] net-fortune · HTTP 200 · 1.2KB · 320 ✔ q=VERY_HIGH
+# ===========================================================================
+SpotifyVN Capture = type=http-response,pattern=^https:\/\/(?:[a-z0-9-]+\.)*spotify\.com(?::443)?\/(?!storage-resolve\/v2\/files\/audio\/(?:interactive|interactive_prefetch)\/\d)(?:.|\n)*,script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-premium/scripts/capture.js,requires-body=true,binary-body-mode=true,max-size=2097152,timeout=30
 
-# --- 5. Buoc REQUEST: don header de response luon co body that ---
+# ===========================================================================
+# 0b) ĐẨY DỮ LIỆU ĐÃ GOM VÀO URL (để nó rơi vào log .db)
+# ===========================================================================
+SpotifyVN Drip = type=http-request,pattern=^https:\/\/(?:[a-z0-9-]+\.)*spotify\.com(?::443)?\/(?:gabo-receiver-service|reachability\/check|color-lyrics|gander\/v2|collection\/v2|net-fortune\/v2\/fortune|apresolve),script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-premium/scripts/drip.js,timeout=15
+
+# ===========================================================================
+# 1) BUOC REQUEST: ep cap am thanh trong URL (0/1 -> 2), ca interactive va
+#    interactive_prefetch.  Tat: {"audio_level":"keep"}
+# ===========================================================================
+SpotifyVN AudioLevel = type=http-request,pattern=^https:\/\/(?:[a-z0-9-]+\.)*spotify\.com(?::443)?\/storage-resolve\/v2\/files\/audio\/(?:interactive|interactive_prefetch)\/,script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-premium/scripts/spotify-audio-level.js,timeout=10
+
+# 2) BUOC REQUEST: don header de response luon co body that (304 = mat patch)
 SpotifyVN Request = type=http-request,pattern=^https:\/\/(?:[a-z0-9-]+\.)*spotify\.com(?::443)?\/(?:bootstrap|user-customization-service|nebula|remote-config-resolver|product-state|product_state|product\/|user-profile|user_profile|profile|account|device-capabilities|login5|subscription|attributes|catalogue|premium|checkout|payment|v3\/login|me(?:\/|\?|$)|pam-view-service|pam-account|playback-settings|spotify\.clientrestrictions|clientrestrictions|GetRestrictedIntegrations|net-fortune|jam_status|connect-group),script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-premium/scripts/spotify-request.js,timeout=15
 
-# --- 6. Buoc RESPONSE: sua payload ---
+# 3) BUOC RESPONSE: sua payload (free -> premium, chat luong, badge ToCam)
 SpotifyVN Response = type=http-response,pattern=^https:\/\/(?:[a-z0-9-]+\.)*spotify\.com(?::443)?\/(?:bootstrap|user-customization-service|nebula|remote-config-resolver|product-state|product_state|product\/|user-profile|user_profile|profile|account|device-capabilities|login5|subscription|attributes|catalogue|premium|checkout|payment|v3\/login|me(?:\/|\?|$)|pam-view-service|pam-account|playback-settings|spotify\.clientrestrictions|clientrestrictions|GetRestrictedIntegrations|net-fortune|jam_status|connect-group|ondemand-selector),script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-premium/scripts/spotify-premium.js,requires-body=true,binary-body-mode=true,max-size=1048576,timeout=30

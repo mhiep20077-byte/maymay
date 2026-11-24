@@ -1,5 +1,43 @@
 # Changelog
 
+## v2.6.0 — 2026-11-24
+
+### Bối cảnh
+Log `.db` mới nhất (276 request) cho thấy toàn bộ request audio đã đi ở **cấp 2**
+(`/storage-resolve/v2/files/audio/interactive/2/<id>`), tức patch URL đã chạy —
+mà UI vẫn khoá "Rất cao". Nghĩa là quyết định nằm ở payload server trả về, không
+phải ở đường dẫn. Mà log .db của Shadowrocket **không có cột body**, nên chưa lần
+nào đọc được payload thật.
+
+### Thêm
+1. **`scripts/capture.js` v2.0.0** — mỗi response Spotify nổi banner
+   `[spot-vn] <endpoint> · HTTP · dung lượng · cờ`, in 96/160/320, `q=`,
+   `prod=`, `premium×N`/`free×N`. Có `dedupe_sec`, `max_noti`, banner tự kiểm tra
+   `CAPTURE ĐÃ CHẠY` khi module nạp thành công. Không sửa body (`$done({})`).
+2. **`scripts/drip.js` v1.0.0`** — kênh gửi dữ liệu không cần server riêng: cắt
+   hàng đợi capture thành mẩu 660 ký tự, base64url, gắn `&zcap=<seq>.<data>` vào
+   query của request Spotify kế tiếp → dữ liệu nằm trong log `.db` mà người dùng
+   vẫn xuất ra gửi đi.
+3. **`tools/decode-log.py`** — bóc `zcap` từ `.db`, ghép theo thứ tự, giải mã
+   base64 720 byte đầu mỗi response (`--raw` để xem dạng text).
+4. **`tests/test-capture.js`** — 19 test (banner, dedupe, protobuf nhị phân,
+   drip chia mẩu/base64url/skip URL nhạc, audio level interactive + prefetch).
+5. **`spotify-audio-level.js` v1.1.0** — ép cấp cho cả `interactive_prefetch`.
+6. Module gộp: `spotify-vn-premium.module` giờ chứa capture + drip + patch
+   (cài 1 cái là đủ), vẫn giữ `spotify-vn-capture.module` cho chế độ chẩn đoán thuần.
+7. Host file: `https://spotify-vn.web.zaka.live/` (link module cố định, không phụ
+   thuộc GitHub).
+
+### Test
+- `node tests/test-patch.js` → 90/90
+- `node tests/test-capture.js` → 19/19
+- Roundtrip capture → drip → decode-log.py: đọc đúng body gốc.
+
+### Không hứa
+320kbps thật + tải offline vẫn do server cấp license theo tier. Badge chữ
+"Premium" ở hồ sơ phần lớn là chuỗi trong app bundle, không đi qua mạng nên proxy
+không đổi được — chỉ đổi được khi chuỗi đó nằm trong response.
+
 ## v2.5.0 — 2026-11-24
 
 ### Bối cảnh
