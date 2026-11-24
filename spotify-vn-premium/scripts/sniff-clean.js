@@ -29,24 +29,36 @@
   var shortPath = pathOnly.split("?")[0] || "/";
   var lowPath = pathOnly.toLowerCase();
 
+  // Bo qua telemetry / metadata / anh / lyrics (van giu storage-resolve)
+  if (
+    !/storage-resolve/i.test(shortPath) &&
+    (/\/(?:image|scdn|lyrics|color-lyrics|track-metadata|playlist-metadata|canvaz|event-service|log-service|melody|head-files|play-history|recently-played)\//i.test(
+      shortPath
+    ) ||
+      /\.(?:png|jpg|jpeg|webp|mp3|ogg|mp4|m4a|svg|css|js)(?:\?|$)/i.test(shortPath))
+  ) {
+    $done({});
+    return;
+  }
+
   // Phan nhom 3 muc tieu chinh
   function detectGroup(p) {
     if (
-      /(?:storage-resolve|net-fortune|device-capabilities|playback-settings|audio-quality|media-quality|streaming-quality|ondemand-selector)/i.test(
+      /(?:storage-resolve|net-fortune|device-capabilities|playback|audio|quality|bitrate|ondemand|capability|capabilities|settings)/i.test(
         p
       )
     ) {
       return "CHAT LUONG";
     }
     if (
-      /(?:pam-view-service|pam-account|clientrestrictions|getrestrictedintegrations|getpremiumplanrow|getplanoverview|\/account(?:\/|\?|$)|\/plan|checkout|payment)/i.test(
+      /(?:pam|plan|restriction|getrestrictedintegrations|getpremiumplanrow|getplanoverview|getshowvalueplanoverview|badge|account|checkout|payment)/i.test(
         p
       )
     ) {
       return "QUAN LY GOI";
     }
     if (
-      /(?:bootstrap|user-customization-service|nebula|product-state|product_state|user-profile|user_profile|\/profile|attributes|subscription|catalogue|premium|identity|login5|remote-config-resolver|\/me(?:\/|\?|$))/i.test(
+      /(?:bootstrap|user-customization-service|ucs|resolve|nebula|product|profile|attributes|subscription|catalogue|premium|identity|login5|remote-config|tier|entitlement|\/me(?:\/|\?|$))/i.test(
         p
       )
     ) {
@@ -57,12 +69,6 @@
 
   var group = detectGroup(lowPath);
   if (!group) {
-    $done({});
-    return;
-  }
-
-  // Bo qua file anh/nhac tinh neu lo dinh ten
-  if (/\.(?:png|jpg|jpeg|webp|mp3|ogg|mp4|m4a|svg|css|js)(?:\?|$)/i.test(shortPath)) {
     $done({});
     return;
   }
