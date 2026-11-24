@@ -1,6 +1,6 @@
 // ============================================================================
 // spotify-vn-premium / scripts/spotify-premium.js
-// Build: 2026-11-24 · v2.0.0
+// Build: 2026-11-24 · v2.4.0
 //
 // v2.0.0 — sửa gốc rễ "cài rồi mà không thấy gì":
 //   * Client Spotify 9.2.x KHÔNG còn gọi /bootstrap và /user-customization-service
@@ -998,15 +998,20 @@
     if (buffer.length && (buffer[0] === 0x7b || buffer[0] === 0x5b)) {
       const s = decodeUtf8(buffer);
       if (s !== null) {
-        const out = patchJsonProduct(s);
+        const out = patchJsonAll(s);
         if (out) return TE.encode(out);
       }
       return null;
     }
     const fields = parse(buffer);
     if (!fields || !fields.length) return null;
-    if (!rewriteStrings(fields, 0)) return null;
-    return serialize(fields);
+    let changed = false;
+    if (rewriteStrings(fields, 0)) changed = true;
+    // v2.4: mở luôn cờ khoá + nâng chất lượng ở MỌI endpoint Spotify, vì trang
+    // "Chất lượng nội dung" không chỉ đọc từ playback-settings.
+    if (unlockPairs(fields, 0)) changed = true;
+    if (setQualityPairs(fields, 0)) changed = true;
+    return changed ? serialize(fields) : null;
   }
 
   const patchCustomize = (b) => edit(b, [1], patchUcs);
@@ -1045,27 +1050,51 @@
   // phải gRPC). v2.2 chỉ đổi free -> premium nên viên đó vẫn là chữ "Premium"
   // màu xanh mặc định. v2.3 ghi đè nhãn hiển thị + bảng mã màu xanh Spotify.
   //
-  // Đổi được qua $argument: {"badge_text":"ToCam","badge_color":"#FFA500"}.
+  // Đổi được qua $argument:
+  //   {"badge_text":"ToCam","badge_color":"#1ED760","badge_text_color":"#121212"}
+  // Mặc định v2.4: chữ "ToCam", nền XANH LÁ giống hệt viên Premium gốc trong app
+  // (ảnh 3), không phải nền cam như v2.3. Muốn cam: badge_color=#FFA500.
+  // badge_text_color bỏ trống = không đụng màu chữ (mặc định của app).
   const BADGE_TEXT =
     typeof opt.badge_text === "string" && opt.badge_text ? opt.badge_text : "ToCam";
   const BADGE_COLOR =
-    typeof opt.badge_color === "string" && opt.badge_color ? opt.badge_color : "#FFA500";
+    typeof opt.badge_color === "string" && opt.badge_color ? opt.badge_color : "#1ED760";
+  const BADGE_TEXT_COLOR =
+    typeof opt.badge_text_color === "string" && opt.badge_text_color ? opt.badge_text_color : "";
 
   const BADGE_KEY =
-    /^(?:badge|badge_?text|badge_?label|badge_?title|badge_?name|pill|pill_?text|chip|chip_?text|tag)$/i;
+    /^(?:badge|badge_?text|badge_?label|badge_?title|badge_?name|badge_?value|pill|pill_?text|pill_?label|chip|chip_?text|chip_?label|tag)$/i;
   const LABEL_KEY =
-    /^(?:title|name|text|label|value|plan_?name|plan_?title|display_?name|short_?name)$/i;
+    /^(?:title|name|text|label|value|plan_?name|plan_?title|plan_?label|display_?name|short_?name|product_?label)$/i;
   const COLOR_KEY = /(?:colou?r|tint|background|bg|fill)$/i;
+  // Màu chữ trong viên badge. Chỉ đụng khi người dùng đặt badge_text_color,
+  // vì đổi màu chữ lệch tương phản là viên badge thành không đọc được.
+  const TEXT_COLOR_KEY =
+    /(?:text_?colou?r|textcolou?r|foreground_?colou?r|label_?colou?r|title_?colou?r|font_?colou?r)$/i;
   const PLAN_WORD = /^(?:spotify\s*_?\s*)?(?:premium|free)$/i;
   const PREMIUM_WORD = /^(?:spotify\s*_?\s*)?premium$/i;
-  const BADGE_ONLY = "Premium";
+  const BADGE_ONLY = /^(?:premium|spotify\s*premium|spotify\s*premium\s*plan)$/i;
+  // Các dạng "màu xanh Spotify" gặp trong payload thật. Gồm hex có/không dấu #,
+  // rgb()/rgba(), và số nguyên 0x1ED760 hay 0xFF1ED760 dùng trong JSON của iOS.
   const GREEN_HEX = /#?(?:1ed760|1db954|1fdf64|1aa34a|158a3f|2ebd59|30d158|1ed75f)/gi;
+  const GREEN_RGB = /rgba?\(\s*30\s*,\s*215\s*,\s*96\s*(?:,\s*[\d.]+\s*)?\)/gi;
+  const GREEN_0X = /0x(?:ff)?(?:1ed760|1db954|1fdf64)/gi;
+  const BADGE_HEX_BARE = BADGE_COLOR.replace(/^#/, "");
+
+  function hexToRgb(hex) {
+    const m = /^#?([0-9a-f]{6})$/i.exec(hex || "");
+    if (!m) return null;
+    const n = parseInt(m[1], 16);
+    return "rgb(" + ((n >> 16) & 255) + ", " + ((n >> 8) & 255) + ", " + (n & 255) + ")";
+  }
+  const BADGE_RGB = hexToRgb(BADGE_COLOR) || "rgb(30, 215, 96)";
 
   function recolor(str) {
-    if (!str || str.length > 60) return str;
-    return str.replace(GREEN_HEX, (m) =>
-      m.charAt(0) === "#" ? BADGE_COLOR : BADGE_COLOR.replace(/^#/, "")
-    );
+    if (!str || str.length > 80) return str;
+    return str
+      .replace(GREEN_HEX, (m) => (m.charAt(0) === "#" ? BADGE_COLOR : BADGE_HEX_BARE))
+      .replace(GREEN_0X, () => BADGE_COLOR)
+      .replace(GREEN_RGB, () => BADGE_RGB);
   }
 
   function patchBadgeJson(str) {
@@ -1088,12 +1117,18 @@
         const v = node[k];
         if (typeof v === "string") {
           const hasHash = v.charAt(0) === "#";
-          const colorValue = hasHash ? BADGE_COLOR : BADGE_COLOR.replace(/^#/, "");
+          const has0x = /^0x/i.test(v);
+          const colorValue = hasHash ? BADGE_COLOR : has0x ? "0x" + BADGE_HEX_BARE.toUpperCase() : BADGE_HEX_BARE;
           const tv = v.trim();
+          const isGreen = new RegExp(GREEN_HEX.source, "i").test(v);
           let nv = v;
-          if (BADGE_KEY.test(k) && PLAN_WORD.test(tv)) nv = BADGE_TEXT;
+          if (TEXT_COLOR_KEY.test(k)) {
+            // Màu chữ: chỉ đổi khi người dùng đặt badge_text_color. Không đặt
+            // thì để nguyên, vì tô cam cả nền lẫn chữ là viên badge mất chữ.
+            if (BADGE_TEXT_COLOR && isGreen) nv = BADGE_TEXT_COLOR;
+          } else if (BADGE_KEY.test(k) && PLAN_WORD.test(tv)) nv = BADGE_TEXT;
           else if (LABEL_KEY.test(k) && PREMIUM_WORD.test(tv)) nv = BADGE_TEXT;
-          else if (COLOR_KEY.test(k) && new RegExp(GREEN_HEX.source, "i").test(v)) nv = colorValue;
+          else if (COLOR_KEY.test(k) && isGreen) nv = colorValue;
           else nv = recolor(v);
           if (nv !== v) {
             node[k] = nv;
@@ -1117,7 +1152,7 @@
       if (f.p.length <= 64) {
         const s = decodeUtf8(f.p);
         if (s !== null && /^[\x20-\x7e]+$/.test(s)) {
-          let nv = s === BADGE_ONLY ? BADGE_TEXT : s;
+          let nv = BADGE_ONLY.test(s) ? BADGE_TEXT : s;
           nv = recolor(nv);
           if (nv !== s) {
             f.p = TE.encode(nv);
@@ -1141,12 +1176,8 @@
     if (b.length && (b[0] === 0x7b || b[0] === 0x5b)) {
       const s = decodeUtf8(b);
       if (s === null) return null;
-      let cur = s;
-      const badge = patchBadgeJson(cur);
-      if (badge) cur = badge;
-      const prod = patchJsonProduct(cur);
-      if (prod) cur = prod;
-      return cur !== s ? TE.encode(cur) : null;
+      const j = patchJsonAll(s);
+      return j ? TE.encode(j) : null;
     }
     const fields = parse(b);
     if (!fields || !fields.length) return null;
@@ -1269,9 +1300,25 @@
   // mức chất lượng đang lưu; WriteContentValue là app ghi mức mới. Khoá Premium
   // ở trang Chất lượng đọc từ đây. Ép mọi cặp (key chứa quality/bitrate) về
   // VERY_HIGH — cả lúc đọc lẫn lúc ghi, để UI và trình phát khớp nhau.
-  const QUALITY_KEY = /(?:quality|bitrate|bit_rate|streaming_?level|audio_?format)/i;
+  const QUALITY_KEY =
+    /(?:quality|bitrate|bit_?rate|max_?bitrate|streaming_?level|audio_?format|streaming_?quality|download_?quality|preferred_?quality|audio_?quality)/i;
   const QUALITY_MAX = "VERY_HIGH";
-  const QUALITY_VALUES = ["AUTOMATIC", "LOW", "NORMAL", "HIGH", "VERY_HIGH", "MEDIUM"];
+  const QUALITY_VALUES = [
+    "AUTOMATIC",
+    "LOW",
+    "NORMAL",
+    "HIGH",
+    "VERY_HIGH",
+    "MEDIUM",
+    "VERY_HIGH_320",
+    "EXTREME",
+    "LOSSLESS",
+    "HIFI"
+  ];
+  // Trần bitrate trong payload: 96 (thấp) / 160 (bình thường) / 320 (cao nhất).
+  // 320 là mức client coi là "Rất cao" nên mọi số nhỏ hơn đều nâng lên 320.
+  const QUALITY_BITRATE_MAX = 320;
+  const BITRATE_KEY = /(?:bitrate|bit_?rate|max_?bitrate|bitrate_?cap|audio_?bitrate)/i;
 
   function setQualityPairs(fields, depth) {
     if (depth > 6) return false;
@@ -1316,8 +1363,20 @@
       for (const k of Object.keys(node)) {
         const v = node[k];
         if (typeof v === "string") {
-          if (QUALITY_KEY.test(k) && QUALITY_VALUES.indexOf(v.toUpperCase()) >= 0 && v !== QUALITY_MAX) {
+          const up = v.toUpperCase();
+          if (QUALITY_KEY.test(k) && QUALITY_VALUES.indexOf(up) >= 0 && up !== QUALITY_MAX) {
             node[k] = QUALITY_MAX;
+            changed = true;
+          } else if (BITRATE_KEY.test(k) && /^\d{2,4}$/.test(v.trim())) {
+            const n = parseInt(v.trim(), 10);
+            if (n > 0 && n < QUALITY_BITRATE_MAX) {
+              node[k] = String(QUALITY_BITRATE_MAX);
+              changed = true;
+            }
+          }
+        } else if (typeof v === "number") {
+          if (BITRATE_KEY.test(k) && v > 0 && v < QUALITY_BITRATE_MAX) {
+            node[k] = QUALITY_BITRATE_MAX;
             changed = true;
           }
         } else walk(v);
@@ -1327,22 +1386,35 @@
     return changed ? JSON.stringify(root) : null;
   }
 
+  // v2.4: gộp các bước "làm sạch" JSON vào một chỗ để dùng cho MỌI endpoint
+  // Spotify, không chỉ 3 họ đã biết. Thứ tự: nhãn/màu badge -> product ->
+  // cờ khoá -> chất lượng. Không nhận ra gì thì trả null (body nguyên bản).
+  function patchJsonAll(str) {
+    let cur = str;
+    // Thứ tự quan trọng: gạt cờ khoá TRƯỚC rồi mới bật cờ premium. Làm ngược
+    // thì clearJsonLocks() thấy key "isPremium" khớp chữ "premium" và gạt
+    // isPremium=true -> false, xoá luôn công của patchJsonProduct.
+    const steps = [patchBadgeJson, clearJsonLocks, patchJsonProduct, setQualityJson];
+    for (const fn of steps) {
+      const next = fn(cur);
+      if (next) cur = next;
+    }
+    return cur === str ? null : cur;
+  }
+
   function patchSettings(b) {
     if (b.length && (b[0] === 0x7b || b[0] === 0x5b)) {
       const s = decodeUtf8(b);
       if (s === null) return null;
-      let cur = s;
-      const q = setQualityJson(cur);
-      if (q) cur = q;
-      const l = clearJsonLocks(cur);
-      if (l) cur = l;
-      return cur !== s ? TE.encode(cur) : null;
+      const j = patchJsonAll(s);
+      return j ? TE.encode(j) : null;
     }
     const fields = parse(b);
     if (!fields || !fields.length) return null;
     let changed = false;
     if (setQualityPairs(fields, 0)) changed = true;
     if (unlockPairs(fields, 0)) changed = true;
+    if (rewriteStrings(fields, 0)) changed = true;
     return changed ? serialize(fields) : null;
   }
 

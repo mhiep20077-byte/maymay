@@ -1,5 +1,5 @@
-#!name=Spotify VN Premium v2.3
-#!desc=Bỏ ads + mở Premium phía máy (on-demand, skip không giới hạn, bỏ ép shuffle). v2.3 thêm: đổi nhãn viên badge Gói Premium thành chữ ToCam + màu cam vàng (#FFA500), gạt cờ khoá premium_only ở playback-settings (badge Premium ở trang Chất lượng), mở khoá danh sách integration (nút Phối nhạc / Jam / Mix), và xử lý cả JSON lẫn gRPC cho 3 họ endpoint pam-view-service / playback-settings / clientrestrictions. Không mở được offline/320kbps vì server quyết.
+#!name=Spotify VN Premium v2.4
+#!desc=Bỏ ads + mở Premium phía máy (on-demand, skip không giới hạn, bỏ ép shuffle). v2.4: nhãn viên badge "Premium" -> chữ ToCam, giữ NỀN XANH LÁ như bản gốc trong app (muốn cam thì đặt badge_color=#FFA500); nâng chất lượng 96/160 -> 320 và gạt cờ khoá ở MỌI endpoint Spotify (không chỉ playback-settings). Không mở được offline/320kbps thật vì license + file nhạc do server cấp theo tier. Muốn xem app gửi gì về máy chủ: cài thêm spotify-vn-capture.module, mỗi response hiện thông báo trên máy.
 #!category=Spotify
 #!author=Script gốc: xzavier-amico / lyc-000001 · đóng gói + fix host: Zaka
 #!homepage=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-premium

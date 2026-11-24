@@ -7,7 +7,7 @@ Module **Shadowrocket (小火箭)** gộp: bỏ quảng cáo + mở khoá Premiu
 > (script còn sống, chạy được) + phần chống 304 / chặn HTTP/3 mà bản đó thiếu.
 > Logic patch giữ nguyên gốc — tao chỉ thêm phần hạ tầng và test để biết nó thật sự chạy.
 
-![test](https://img.shields.io/badge/test-58%2F58%20pass-brightgreen)
+![test](https://img.shields.io/badge/test-72%2F72%20pass-brightgreen)
 
 ---
 
@@ -15,7 +15,7 @@ Module **Shadowrocket (小火箭)** gộp: bỏ quảng cáo + mở khoá Premiu
 
 ```
 bash tools/test.sh
-→ PASS: 58    FAIL: 0
+→ PASS: 72    FAIL: 0
 ```
 
 Test dựng protobuf giả đúng layout thật của Spotify rồi decode kết quả ra so từng field, gồm:
@@ -34,6 +34,17 @@ Bản 9.2.x không còn gọi `bootstrap`: 91% API đi qua shard `gae2-spclient.
 v1 vừa dùng wildcard MITM sai (`*-spclient…`) vừa nhắm sai endpoint → patch không chạy byte nào.
 v2 sửa cả hai + thêm rule chặn quảng cáo theo URL. Đọc `docs/CHAN-DOAN-V2.md` trước khi test.
 
+
+### v2.4.0 — badge ToCam nền xanh (như ảnh 3), chất lượng mọi endpoint, module capture có thông báo
+
+- Nhãn badge `Premium → ToCam`, **giữ nền xanh lá** `#1ED760` (v2.3 đổi sang cam). Đổi màu bằng
+  `$argument`: `{"badge_color":"#FFA500","badge_text_color":"#121212"}`.
+- `patchJsonAll()` chạy cho **mọi** endpoint (product-state / user-profile / device-capabilities /
+  remote-config / login5…): gạt cờ khoá → bật `isPremium` → ép `quality=VERY_HIGH`, `bitrate 96/160→320`.
+- Module mới `spotify-vn-capture.module` + `scripts/capture.js`: mỗi response khớp pattern nổi
+  **thông báo** trên máy, in endpoint + các chuỗi `quality/bitrate/premium/lock` bên trong payload,
+  có `FREE·` khi payload còn `free`. Khử trùng lặp 300s, không sửa body.
+- Test: **72/72**. Chi tiết + giới hạn: `docs/V2.4-CHAT-LUONG-VA-CAPTURE.md`.
 
 ### v2.3.0 — badge ToCam + cam vàng, mở khoá chip chất lượng
 

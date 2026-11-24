@@ -1,6 +1,6 @@
 // ============================================================================
 // spotify-vn-premium / scripts/debug.js
-// Build: 2026-11-24 · v1.3.0 · type: http-response
+// Build: 2026-11-24 · v1.4.0 · type: http-response
 //
 // Mục đích duy nhất: in ra log cho biết endpoint nào trả body gì, để chốt
 // patch chính xác. KHÔNG sửa gì — $done({}) = trả nguyên bản.
@@ -115,6 +115,25 @@
       flagFree + flagPrem + " " + path.slice(0, 90) + " | " + hex +
       (strs ? " | s=" + strs : "") + peek
   );
+
+  // v1.4: bật thông báo nếu module truyền {"notify":true}. Mặc định vẫn chỉ log
+  // để module DEBUG không làm phiền; file scripts/capture.js mới là bản luôn kêu.
+  try {
+    var o = {};
+    try {
+      o = typeof $argument === "string" ? JSON.parse($argument || "{}") : $argument || {};
+    } catch (e3) {
+      o = {};
+    }
+    var wantNotify = !(o.notify === false || o.notify === "false" || o.notify === 0 || o.notify === "0" || o.notify === undefined || o.notify === null);
+    if (wantNotify) {
+      var t0 = "[spot-vn] " + (path.split("/").filter(Boolean).slice(-1)[0] || "");
+      var b0 = (flagFree ? "FREE· " : "") + (strs ? strs.slice(0, 160) : hex);
+      if (typeof $notify === "function") $notify(t0, kind + " " + status + " " + len + "B", b0);
+      else if (typeof $notification !== "undefined" && $notification && $notification.post)
+        $notification.post(t0, kind + " " + status + " " + len + "B", b0);
+    }
+  } catch (e4) {}
 
   $done({});
 })();

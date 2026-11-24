@@ -146,7 +146,11 @@ const buildCustomize = () => fBytes(1, buildUcs());
 
 // ------------------------------------------------------------------ sandbox
 
-function runResponse(body, url, { status = 200, withTextCodec = false, via = "body", statusKey = "status" } = {}) {
+function runResponse(
+  body,
+  url,
+  { status = 200, withTextCodec = false, via = "body", statusKey = "status", argument = undefined } = {}
+) {
   let captured = null;
   const resp = { headers: {} };
   resp[statusKey] = status;
@@ -160,6 +164,9 @@ function runResponse(body, url, { status = 200, withTextCodec = false, via = "bo
     },
     console: { log: () => {} },
   };
+  if (argument !== undefined) {
+    sandbox.$argument = typeof argument === "string" ? argument : JSON.stringify(argument);
+  }
   if (withTextCodec) {
     sandbox.TextEncoder = TextEncoder;
     sandbox.TextDecoder = TextDecoder;
@@ -776,15 +783,16 @@ test("JSON GetPremiumPlanRow: badge 'Premium' -> 'ToCam'", () => {
   assert.strictEqual(o.badge.label, "ToCam");
 });
 
-test("JSON badge: màu xanh Spotify -> #FFA500", () => {
+test("JSON badge: mac dinh giu mau xanh, dat badge_color=#FFA500 thi doi het", () => {
   const body = Buffer.from(
     JSON.stringify({ badge: { text: "Premium", color: "#1ED760", background: "1DB954" } })
   );
-  const out = runResponse(body, URL_PLANROW);
+  const out = runResponse(body, URL_PLANROW, { argument: { badge_color: "#FFA500" } });
   assert.ok(out && out.body, "không đổi màu");
   const o = JSON.parse(Buffer.from(out.body).toString("utf8"));
   assert.strictEqual(o.badge.color, "#FFA500");
   assert.strictEqual(o.badge.background, "FFA500");
+  assert.strictEqual(o.badge.text, "ToCam");
 });
 
 test("JSON badge: chuỗi khác (tên gói 'Spotify Free') không bị đổi thành ToCam", () => {
@@ -842,6 +850,167 @@ test("module DEBUG + debug.js tồn tại, script-path trỏ đúng file", () =>
     .replace(/^https?:\/\/.+\/(scripts|optional)\//, "$1/");
   assert.ok(fs.existsSync(path.join(ROOT, sp)), "debug.js không tồn tại: " + sp);
   assert.ok(fs.statSync(path.join(ROOT, sp)).size > 0);
+});
+
+
+console.log("\n[10] v2.4 - cam vang moi dang mau / chat luong moi endpoint / capture\n");
+
+const SCRIPT_CAPTURE = path.join(ROOT, "scripts", "capture.js");
+
+function runCapture(body, url, arg, opts = {}) {
+  const events = [];
+  let captured = null;
+  const store = Object.assign({}, opts.store || {});
+  const sandbox = {
+    $request: { url, method: "GET", headers: {} },
+    $response: { status: 200, body: new Uint8Array(body), headers: {} },
+    $done: (o) => {
+      captured = o || {};
+    },
+    $notify: (title, subtitle, text) => events.push({ title, subtitle, text }),
+    $persistentStore: {
+      read: (k) => (k in store ? store[k] : null),
+      write: (v, k) => {
+        store[k] = String(v);
+        return true;
+      },
+    },
+    $argument: arg === undefined ? undefined : typeof arg === "string" ? arg : JSON.stringify(arg),
+    console: { log: () => {} },
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(fs.readFileSync(SCRIPT_CAPTURE, "utf8"), sandbox, { filename: "capture.js" });
+  return { captured, events, store };
+}
+
+test("JSON: 'Spotify Premium' trong key plan_name -> 'ToCam'", () => {
+  const body = Buffer.from(JSON.stringify({ plan: { plan_name: "Spotify Premium" } }));
+  const out = runResponse(body, URL_PLANROW);
+  assert.ok(out && out.body, "khong doi nhan plan_name");
+  assert.strictEqual(JSON.parse(Buffer.from(out.body).toString("utf8")).plan.plan_name, "ToCam");
+});
+
+test("JSON: mac dinh giu NEN XANH LA (rgb(30,215,96)) nhu ban goc", () => {
+  const body = Buffer.from(JSON.stringify({ badge: { color: "rgb(30, 215, 96)", label: "Premium" } }));
+  const out = runResponse(body, URL_PLANROW);
+  const o = JSON.parse(Buffer.from(out.body).toString("utf8"));
+  assert.strictEqual(o.badge.color, "rgb(30, 215, 96)");
+  assert.strictEqual(o.badge.label, "ToCam");
+});
+
+test("JSON: dat badge_color=#FFA500 thi moi dang mau deu thanh cam", () => {
+  const arg = { argument: { badge_color: "#FFA500" } };
+  const cases = [
+    ["rgb(30, 215, 96)", "rgb(255, 165, 0)"],
+    ["#1ED760", "#FFA500"],
+  ];
+  for (const [src, want] of cases) {
+    const body = Buffer.from(JSON.stringify({ badge: { color: src } }));
+    const out = runResponse(body, URL_PLANROW, arg);
+    const o = JSON.parse(Buffer.from(out.body).toString("utf8"));
+    assert.strictEqual(o.badge.color, want, src + " -> " + o.badge.color);
+  }
+});
+
+test("JSON: dang 0x1ED760 + badge_color cam -> 0xFFA500 (giu tien to 0x)", () => {
+  const body = Buffer.from(JSON.stringify({ badge: { color: "0x1ED760" } }));
+  const out = runResponse(body, URL_PLANROW, { argument: { badge_color: "#FFA500" } });
+  const o = JSON.parse(Buffer.from(out.body).toString("utf8"));
+  assert.strictEqual(o.badge.color, "0xFFA500");
+});
+
+test("JSON: mau chu (text_color) KHONG bi to cam khi khong dat badge_text_color", () => {
+  const body = Buffer.from(JSON.stringify({ badge: { text_color: "#1ED760", color: "#1ED760", label: "Premium" } }));
+  const out = runResponse(body, URL_PLANROW);
+  const o = JSON.parse(Buffer.from(out.body).toString("utf8"));
+  assert.strictEqual(o.badge.text_color, "#1ED760", "mau chu bi doi -> chu mat tren nen cam");
+  assert.strictEqual(o.badge.color, "#1ED760");
+});
+
+test("JSON: dat badge_text_color thi mau chu doi theo", () => {
+  const body = Buffer.from(JSON.stringify({ badge: { text_color: "#1ED760" } }));
+  const out = runResponse(body, URL_PLANROW, { argument: { badge_text_color: "#1A1A1A" } });
+  const o = JSON.parse(Buffer.from(out.body).toString("utf8"));
+  assert.strictEqual(o.badge.text_color, "#1A1A1A");
+});
+
+test("JSON: bitrate 96 / max_bitrate 160 -> 320", () => {
+  const body = Buffer.from(JSON.stringify({ audio: { bitrate: 96, max_bitrate: "160", quality: "HIGH" } }));
+  const out = runResponse(body, URL_PROFILE);
+  const o = JSON.parse(Buffer.from(out.body).toString("utf8"));
+  assert.strictEqual(o.audio.bitrate, 320);
+  assert.strictEqual(o.audio.max_bitrate, "320");
+  assert.strictEqual(o.audio.quality, "VERY_HIGH");
+});
+
+test("endpoint la (user-profile): premium_locked=true -> false, isPremium=false -> true", () => {
+  const body = Buffer.from(JSON.stringify({ account: { premium_locked: true, isPremium: false } }));
+  const out = runResponse(body, URL_PROFILE);
+  const o = JSON.parse(Buffer.from(out.body).toString("utf8"));
+  assert.strictEqual(o.account.premium_locked, false, "co khoa chua gat");
+  assert.strictEqual(o.account.isPremium, true, "co premium bi gat nguoc");
+});
+
+test("playback-settings protobuf: chuoi 'free' -> 'premium' (v2.4 moi co)", () => {
+  const out = runResponse(gframe(0x00, cat(fStr(1, "mode"), fStr(2, "free"))), URL_SETTINGS);
+  assert.ok(out && out.body, "khong patch chuoi trong playback-settings");
+  const d = decode(Buffer.from(out.body).subarray(5));
+  assert.strictEqual(one(d, 2).p.toString("utf8"), "premium");
+});
+
+test("capture.js: noi thong bao, khong sua body, co ten endpoint", () => {
+  const payload = cat(fStr(1, "audio_quality"), fStr(2, "free"), fStr(3, "bitrate=96"));
+  const r = runCapture(gframe(0x00, payload), URL_SETTINGS);
+  assert.strictEqual(Object.keys(r.captured).length, 0, "capture khong duoc sua body");
+  assert.strictEqual(r.events.length, 1, "khong noi thong bao");
+  assert.ok(/^\[spot-vn\] .+/.test(r.events[0].title), "tieu de thieu endpoint: " + r.events[0].title);
+  assert.ok(/quality|bitrate|free/i.test(r.events[0].text), "noi dung thong bao khong co chuoi can xem");
+});
+
+test("capture.js: cung payload trong dedupe_sec -> khong keu lai", () => {
+  const body = gframe(0x00, cat(fStr(1, "audio_quality"), fStr(2, "free")));
+  const first = runCapture(body, URL_SETTINGS, { dedupe_sec: 300 });
+  assert.strictEqual(first.events.length, 1);
+  const second = runCapture(body, URL_SETTINGS, { dedupe_sec: 300 }, { store: first.store });
+  assert.strictEqual(second.events.length, 0, "keu lai cung payload");
+});
+
+test("capture.js: notify=false -> chi log, khong banner", () => {
+  const r = runCapture(gframe(0x00, fStr(1, "premium")), URL_BADGE, { notify: false });
+  assert.strictEqual(r.events.length, 0);
+});
+
+test("module capture: ton tai, script-path tro dung capture.js, hostname hop le", () => {
+  const p = path.join(ROOT, "spotify-vn-capture.module");
+  assert.ok(fs.existsSync(p), "thieu spotify-vn-capture.module");
+  const mod = fs.readFileSync(p, "utf8");
+  const sp = mod
+    .match(/script-path=([^,\n]+)/)[1]
+    .replace(/^__RAW_BASE__\//, "")
+    .replace(/^https?:\/\/.+\/(scripts|optional)\//, "$1/");
+  assert.strictEqual(sp, "scripts/capture.js");
+  assert.ok(fs.existsSync(path.join(ROOT, sp)), "capture.js khong ton tai");
+  const line = mod.split("\n").find((l) => l.startsWith("hostname"));
+  assert.ok(line && line.includes("*.spotify.com") && line.includes("%APPEND%"));
+  assert.ok(!/\*-/.test(line), "wildcard giua nhan: " + line);
+});
+
+test("debug.js v1.4: mac dinh khong tu noi thong bao", () => {
+  let notified = 0;
+  const sandbox = {
+    $request: { url: URL_SETTINGS, method: "GET", headers: {} },
+    $response: { status: 200, body: new Uint8Array(gframe(0x00, fStr(1, "premium"))) },
+    $done: () => {},
+    $notify: () => {
+      notified++;
+    },
+    console: { log: () => {} },
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(fs.readFileSync(path.join(ROOT, "scripts", "debug.js"), "utf8"), sandbox, {
+    filename: "debug.js",
+  });
+  assert.strictEqual(notified, 0, "debug.js tu keu khi chua bat notify");
 });
 
 console.log("\n" + "-".repeat(62));

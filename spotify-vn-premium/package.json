@@ -1,6 +1,6 @@
 {
   "name": "spotify-vn-premium",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "private": true,
   "description": "Shadowrocket module: Spotify ad-free + client-side premium unlock (VN-tested setup)",
   "scripts": {

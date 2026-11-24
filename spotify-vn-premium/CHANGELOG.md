@@ -1,5 +1,29 @@
 # Changelog
 
+## v2.4.0 — 2026-11-24
+
+### Bối cảnh
+v2.3 đổi badge sang **cam** và vẫn chưa mở được dòng `Rất cao` ở 2 trang Chất lượng (ảnh 1–2).
+Yêu cầu mới: chữ **ToCam** nhưng viên badge **nền xanh lá như ảnh 3** (không phải xám/cam),
+và cần một file bắt gói **có thông báo nổi trên máy** để lần sau khỏi đoán.
+
+### Sửa / thêm
+1. `BADGE_COLOR` mặc định `#1ED760` (xanh lá), `BADGE_TEXT_COLOR` mặc định rỗng (không đụng màu chữ);
+   đặt cam bằng `$argument {"badge_color":"#FFA500"}`.
+2. Màu nhận đủ 4 dạng và **giữ đúng tiền tố gốc**: `#RRGGBB`, `RRGGBB`, `rgb(r,g,b)`, `0xRRGGBB`.
+3. `patchJsonAll()` áp cho mọi endpoint đã khớp pattern: `patchBadgeJson` → `clearJsonLocks` →
+   `patchJsonProduct` → `setQualityJson` (đúng thứ tự, tránh clear gạt mất `isPremium` vừa bật).
+4. `bitrate / max_bitrate 96|160 → 320`, `quality|streamingQuality → VERY_HIGH`.
+5. Module mới `spotify-vn-capture.module` + `scripts/capture.js` + `scripts/debug.js v1.4`:
+   - banner `[spot-vn] <endpoint> <grpc|json> <bytes>` + chuỗi quality/bitrate/premium/lock bên trong
+   - `FREE·` khi payload còn `free`; hex 32 byte đầu của payload bên trong khung gRPC
+   - dedupe 300s, `notify=false` để tắt banner, không sửa body
+6. Test: **72/72** (thêm 14 case cho màu/nhãn, bitrate, cờ khoá endpoint lạ, capture notify/dedupe/module).
+
+### Không hứa
+Offline + 320 kbps thật: server cấp license theo tier. Nút Blend/Jam: nếu feed không trả thì không chèn được.
+
+
 ## v2.3.0 — 2026-11-24
 
 ### Bối cảnh
