@@ -652,7 +652,7 @@
     "enable-blend": "1",
     "financial-product": "pr:premium,tc:0",
     "is-eligible-premium-unboxing": true,
-    "name": "ToCam",
+    "name": "Spotify Premium",
     "nft-disabled": "1",
     "on-demand": true,
     "payments-initial-campaign": "default",
@@ -895,11 +895,11 @@
     "FREE_TIER": "PREMIUM",
     "Free Tier": "Premium",
     "free tier": "premium",
-    "spotify-free": "ToCam",
-    spotify_free: "ToCam",
-    "Spotify Free": "ToCam",
+    "spotify-free": "Spotify Premium",
+    spotify_free: "Spotify Premium",
+    "Spotify Free": "Spotify Premium",
     "SPOTIFY_FREE": "SPOTIFY_PREMIUM",
-    "spotify free": "ToCam",
+    "spotify free": "Spotify Premium",
     "Free account": "Premium account",
     "free_account": "premium",
     "FREE_ACCOUNT": "PREMIUM"
@@ -942,7 +942,7 @@
             changed = true;
           } else if (SPOTIFY_FREE_LITERAL.test(v)) {
             // "Spotify Free" là tên sản phẩm, không phải enum: đổi ở bất kỳ key nào.
-            node[k] = "ToCam";
+            node[k] = "Spotify Premium";
             changed = true;
           }
         } else if (typeof v === "boolean") {

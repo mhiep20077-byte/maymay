@@ -707,13 +707,13 @@ test("gRPC: badge trả 2 -> giữ nguyên (không đè badge khác)", () => {
   assert.ok(!out || !out.body, "sửa bừa badge không phải free");
 });
 
-test("gRPC: pam string 'Spotify Free' -> 'ToCam', length prefix đúng", () => {
+test("gRPC: pam string 'Spotify Free' -> 'Spotify Premium', length prefix đúng", () => {
   const inner = cat(fStr(1, "catalogue"), fStr(2, "Spotify Free"));
   const out = runResponse(gframe(0x00, inner), URL_PLAN);
   assert.ok(out && out.body);
   const fr = gframes(Buffer.from(out.body));
   const fields = decode(fr[0].payload);
-  assert.strictEqual(one(fields, 2).p.toString("utf8"), "ToCam");
+  assert.strictEqual(one(fields, 2).p.toString("utf8"), "Spotify Premium");
 });
 
 test("gRPC: nhiều khung — trailer 0x80 giữ nguyên từng byte", () => {
@@ -753,12 +753,12 @@ test("gRPC: playback-settings key khác quality -> không đụng", () => {
   assert.ok(!out || !out.body, "sửa bừa cài đặt không liên quan");
 });
 
-test("JSON: GetPremiumPlanRow trả 'Spotify Free' -> 'ToCam'", () => {
+test("JSON: GetPremiumPlanRow trả 'Spotify Free' -> 'Spotify Premium'", () => {
   const body = Buffer.from(JSON.stringify({ rows: [{ name: "Spotify Free", price: "0" }] }));
   const out = runResponse(body, URL_PLANROW);
   assert.ok(out && out.body);
   const o = JSON.parse(Buffer.from(out.body).toString("utf8"));
-  assert.strictEqual(o.rows[0].name, "ToCam");
+  assert.strictEqual(o.rows[0].name, "Spotify Premium");
 });
 
 test("module pattern khớp 3 họ endpoint mới (pam / settings / restrictions)", () => {
@@ -799,7 +799,7 @@ test("JSON badge: chuỗi khác (tên gói 'Spotify Free') không bị đổi th
   const body = Buffer.from(JSON.stringify({ rows: [{ name: "Spotify Free" }] }));
   const out = runResponse(body, URL_PLANROW);
   const o = JSON.parse(Buffer.from(out.body).toString("utf8"));
-  assert.strictEqual(o.rows[0].name, "ToCam");
+  assert.strictEqual(o.rows[0].name, "Spotify Premium");
 });
 
 test("gRPC PAM: string 'Premium' -> 'ToCam'", () => {
