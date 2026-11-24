@@ -17,7 +17,7 @@
 // tests/test-patch.js). Chỉ thêm header tương thích host ở trên cùng.
 // Chạy: http-response, requires-body + binary-body-mode (xem .module).
 // ============================================================================
-// Spotify Premium — Shadowrocket adapted build
+// ToCam — Shadowrocket adapted build
 // Adapted from xzavier-amico/modules (Loon plugin) spotify_premium.js.
 // The original rewriting logic below is byte-for-byte unchanged; only a small
 // host-compatibility header is prepended, because Shadowrocket's script
@@ -136,7 +136,7 @@
 
 // ==================== original script below (unmodified) ====================
 
-// Spotify Premium — ad-free + shuffle unlock for Loon / Egern.
+// ToCam — ad-free + shuffle unlock for Loon / Egern.
 //
 // Spotify answers /bootstrap and /user-customization-service with protobuf that
 // carries the account's product state and the remote config flags. This script
@@ -652,7 +652,7 @@
     "enable-blend": "1",
     "financial-product": "pr:premium,tc:0",
     "is-eligible-premium-unboxing": true,
-    "name": "Spotify Premium",
+    "name": "ToCam",
     "nft-disabled": "1",
     "on-demand": true,
     "payments-initial-campaign": "default",
@@ -895,11 +895,11 @@
     "FREE_TIER": "PREMIUM",
     "Free Tier": "Premium",
     "free tier": "premium",
-    "spotify-free": "Spotify Premium",
-    spotify_free: "Spotify Premium",
-    "Spotify Free": "Spotify Premium",
+    "spotify-free": "ToCam",
+    spotify_free: "ToCam",
+    "Spotify Free": "ToCam",
     "SPOTIFY_FREE": "SPOTIFY_PREMIUM",
-    "spotify free": "Spotify Premium",
+    "spotify free": "ToCam",
     "Free account": "Premium account",
     "free_account": "premium",
     "FREE_ACCOUNT": "PREMIUM"
@@ -942,7 +942,7 @@
             changed = true;
           } else if (SPOTIFY_FREE_LITERAL.test(v)) {
             // "Spotify Free" là tên sản phẩm, không phải enum: đổi ở bất kỳ key nào.
-            node[k] = "Spotify Premium";
+            node[k] = "ToCam";
             changed = true;
           }
         } else if (typeof v === "boolean") {
