@@ -1,0 +1,16 @@
+#!name=Locket Cam-UI v2 (bắt UI mới)
+#!desc=Tự dò & bật UI mới: zoom .5x/1x/2x, đếm giây 3s/5s/10s, nút mặt cười, video 60s. Merge-only, không đụng catalog filter.
+#!homepage=https://t.me/zakadeep_bot
+
+[Rule]
+# (không cần rule riêng — script chạy theo pattern)
+
+[Script]
+Locket CamUI = type=http-response,pattern=^https?:\/\/firebaseremoteconfig\.googleapis\.com\/v1\/projects\/locket-4252a\/namespaces\/firebase:fetch,requires-body=1,max-size=0,script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/locket-camui/Locket_CamUI.js
+
+Locket ReqGate = type=http-request,pattern=^https?:\/\/firebaseremoteconfig\.googleapis\.com\/v1\/projects\/locket-4252a\/,requires-body=1,max-size=0,script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/locket-camui/Locket_ReqGate.js
+
+Locket Catalog = type=http-response,pattern=^https?:\/\/(api\.)?locketcamera\.com\/,requires-body=1,max-size=2000000,script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/locket-camui/Locket_Catalog_Probe.js
+
+[MITM]
+hostname = %APPEND% firebaseremoteconfig.googleapis.com, api.locketcamera.com, *.locketcamera.com
