@@ -1,0 +1,10 @@
+#!name=Spotify VN v3.0 DEBUG
+#!desc=Chi de xem app dang goi endpoint nao + app nhan gi. KHONG patch, KHONG bat goi. Cai rieng khi can soi loi.
+#!category=Spotify
+#!author=Zaka
+
+[MITM]
+hostname = %APPEND% *.spotify.com
+
+[Script]
+SpotVN_Debug = type=http-response,pattern=^https://.*spotify\.com/,script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-premium/scripts/debug.js,requires-body=true,max-size=262144

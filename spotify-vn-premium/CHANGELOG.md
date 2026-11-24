@@ -1,5 +1,34 @@
 # Changelog
 
+## v3.0.0 — 2026-11-24
+
+### Bối cảnh
+Bản v2.6/v2.7 cài vào là bật VPN báo lỗi, mất mạng. Không phải script sai —
+file module chứa cú pháp Shadowrocket không đọc nổi, làm hỏng cả file cấu hình.
+
+### Đã bỏ (thủ phạm thật)
+- `[Rule]` với `AND,((DOMAIN-SUFFIX,spotify.com),(PROTOCOL,UDP)),REJECT` — cú pháp logic của Surge.
+- `URL-REGEX,...,REJECT` — không hỗ trợ trong module Shadowrocket.
+- `binary-body-mode=true` — khoá của Loon, Shadowrocket không có.
+- `timeout=` trong dòng script — không phải khoá module của Shadowrocket.
+- `#!icon=` — gọi mạng lúc nạp module.
+- Pattern regex dài có lookahead `(?!...)` và `\/` → về `^https://.*spotify\.com/`.
+
+### Thêm
+- 4 module tách tầng: MINI → LITE → PREMIUM → CAPTURE, cài từ nhẹ lên để khoanh vùng lỗi.
+- `optional/spotify-vn-debug.module` — chỉ in endpoint, không patch.
+- Nhóm test `v3.0 module:` (6 test) khoá chặt: không được lọt lại `[Rule]`,
+  `URL-REGEX`, `AND,(`, khoá lạ trong `[Script]`, pattern có lookahead.
+- `docs/V3.0-FIX-VPN.md`: chẩn đoán khi bật VPN vẫn lỗi dù không có module.
+
+### Thay đổi hành vi
+- **Không chặn quảng cáo** nữa (rule chặn chính là một phần gây lỗi). Muốn chặn thì
+  thêm `.list` riêng trong cấu hình, đừng nhét `[Rule]` vào module.
+- Pattern trong module để rộng; việc lọc endpoint chuyển vào trong script.
+
+### Test
+92/92 (patch) + 19/19 (capture), chạy offline.
+
 ## v2.6.0 — 2026-11-24
 
 ### Bối cảnh

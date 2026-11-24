@@ -428,17 +428,21 @@ test("pattern trong module là regex hợp lệ", () => {
   for (const p of pats) new RegExp(p);
 });
 
-test("module chặn QUIC/UDP cho spotify.com", () => {
-  assert.ok(/PROTOCOL,UDP/.test(fs.readFileSync(MODULE_FILE, "utf8")), "thiếu rule chặn UDP");
+// v3.0: QUIC/UDP block ĐÃ BỊ BỎ CÓ CHỦ Ý — rule AND,((DOMAIN-SUFFIX,...),(PROTOCOL,UDP))
+// không được Shadowrocket hiểu, làm hỏng cả file cấu hình -> bật VPN là báo lỗi.
+test("v3.0: KHONG chặn QUIC/UDP nữa (chính là thứ làm hỏng config Shadowrocket)", () => {
+  const mod = fs.readFileSync(MODULE_FILE, "utf8");
+  assert.ok(!/PROTOCOL,UDP/.test(mod), "van con PROTOCOL,UDP");
 });
 
-test("module patch đúng endpoint của client mới, không đụng metadata/lyrics", () => {
-  const mod = fs.readFileSync(MODULE_FILE, "utf8");
-  const resp = mod.split("\n").find((l) => l.startsWith("SpotifyVN Response"));
-  assert.ok(resp.includes("bootstrap|user-customization-service"), "mất endpoint cũ");
-  assert.ok(resp.includes("nebula"), "thiếu nebula (client 9.2.x dùng cái này)");
-  assert.ok(resp.includes("remote-config-resolver"), "thiếu remote-config-resolver");
-  assert.ok(!/metadata|lyrics|chroma/.test(resp), "pattern response lan sang metadata/lyrics");
+test("v3.0: script van phu du endpoint client moi, va tu bo qua media/lyrics", () => {
+  const src = fs.readFileSync(SCRIPT_RESPONSE, "utf8");
+  // script tự nhận diện endpoint, nên pattern trong module cố tình để rộng.
+  for (const ep of ["bootstrap", "nebula", "remote-config-resolver", "product-state", "net-fortune"]) {
+    assert.ok(src.indexOf(ep) >= 0, "script thieu xu ly endpoint: " + ep);
+  }
+  // và phải tự chặn nhánh nhị phân nặng để không patch bừa.
+  assert.ok(/\/(?:playplay|storage-resolve)/.test(src), "script khong tu bo qua playplay/storage-resolve");
 });
 
 test("MITM hostname dùng wildcard hợp lệ (không dùng *-spclient)", () => {
@@ -452,28 +456,24 @@ test("MITM hostname dùng wildcard hợp lệ (không dùng *-spclient)", () => 
   assert.ok(line.includes("%APPEND%"), "thiếu %APPEND% (xoá sạch list cũ của app)");
 });
 
-test("pattern trong module khớp đúng URL thật lấy từ log (shard gae2)", () => {
+test("v3.0: pattern khop dung URL that lay tu log (shard gae2)", () => {
   const mod = fs.readFileSync(MODULE_FILE, "utf8");
-  const all = [...mod.matchAll(/pattern=(\S+?),script-path=(\S+?),/g)]
+  const all = [...mod.matchAll(/pattern=(\S+?),script-path=([^\s,]+)/g)]
     .filter((m) => !/capture\.js|drip\.js/.test(m[2]))
     .map((m) => new RegExp(m[1]));
-  assert.ok(all.length >= 2, "phải có ít nhất 2 script (request + response)");
+  assert.ok(all.length >= 2, "phai co it nhat 2 script (request + response)");
   const real = [
     "https://gae2-spclient.spotify.com/remote-config-resolver/v3/configuration",
     "https://gae2-spclient.spotify.com/nebula/v1/configuration/attributes",
     "https://spclient.wg.spotify.com/bootstrap/v1/bootstrap",
     "https://gae2-spclient.spotify.com/user-customization-service/v1/customize",
   ];
-  // v2.5 có thêm script audio-level (chỉ khớp storage-resolve) nên chỉ lấy
-  // những pattern bao được toàn bộ URL thật ở trên.
   const pats = all.filter((re) => real.every((u) => re.test(u)));
-  assert.ok(pats.length >= 2, "request + response phải cùng khớp URL thật, đang có " + pats.length);
-  const notOurs = [
-    "https://gae2-spclient.spotify.com/playplay/v1/key/abc",
-    "https://spclient.wg.spotify.com/metadata/4/track/abc",
-    "https://audio-ak-spotify-com.akamaized.net/x",
-  ];
-  for (const u of notOurs) for (const re of pats) assert.ok(!re.test(u), "bắt nhầm: " + u);
+  assert.ok(pats.length >= 2, "request + response phai cung khop URL that, dang co " + pats.length);
+  // v3.0: pattern rộng là CÓ CHỦ Ý (script tự lọc theo path). Nhưng không được
+  // kéo cả host media/CDN của Spotify vào MITM.
+  const notOurs = ["https://audio-ak-spotify-com.akamaized.net/x"];
+  for (const u of notOurs) for (const re of pats) assert.ok(!re.test(u), "bat nham host CDN: " + u);
 });
 
 console.log("\n[6] v2 — endpoint mới của Spotify 9.2.x\n");
@@ -670,7 +670,6 @@ test("module pattern khớp endpoint product-state / user-profile / login5", () 
     "https://gae2-spclient.spotify.com/remote-config-resolver/v3/configuration"
   ];
   for (const u of urls) assert.ok(re.test(u), "pattern không khớp: " + u);
-  assert.ok(!re.test("https://gae2-spclient.spotify.com/playplay/v1/key/abc"), "pattern bắt nhầm playplay");
 });
 
 console.log("\n[7] gRPC — pam-view-service / playback-settings / clientrestrictions\n");
@@ -783,7 +782,6 @@ test("module pattern khớp 3 họ endpoint mới (pam / settings / restrictions
   for (const u of [URL_BADGE, URL_PLAN, URL_PLANROW, URL_SETTINGS, URL_RESTRICT]) {
     assert.ok(re.test(u), "pattern không khớp: " + u);
   }
-  assert.ok(!re.test("https://gae2-spclient.spotify.com/playplay/v1/key/abc"), "pattern bắt nhầm playplay");
 });
 
 console.log("\n[9] v2.3 — badge ToCam / cam vàng / gạt cờ khoá\n");
@@ -854,7 +852,7 @@ test("JSON restrictions: mảng integration bị khoá -> rỗng", () => {
 console.log("\n[8] Module DEBUG\n");
 
 test("module DEBUG + debug.js tồn tại, script-path trỏ đúng file", () => {
-  const p = path.join(ROOT, "spotify-vn-premium-DEBUG.module");
+  const p = path.join(ROOT, "optional", "spotify-vn-debug.module");
   assert.ok(fs.existsSync(p), "thiếu module debug");
   const mod = fs.readFileSync(p, "utf8");
   const sp = mod
@@ -1209,30 +1207,81 @@ test("v2.5 jam_status JSON: is_host/can_join=false -> true", () => {
   assert.strictEqual(o.can_join, true);
 });
 
-test("v2.5 module: KHONG con REJECT net-fortune (service chon file nhac)", () => {
-  const mod = fs.readFileSync(MODULE_FILE, "utf8");
-  const rejectLines = mod
-    .split("\n")
-    .filter((l) => l.startsWith("URL-REGEX") && /REJECT\s*$/.test(l.trim()));
-  for (const l of rejectLines) {
-    assert.ok(!/net-fortune/.test(l), "con REJECT net-fortune: " + l);
+// ---------------------------------------------------------------------------
+// v3.0 — nhóm test chống tái phát lỗi "bật VPN là báo lỗi".
+// Nguyên nhân cũ: module chứa [Rule] với AND(...)/PROTOCOL,UDP/URL-REGEX và
+// các khóa lạ (binary-body-mode, timeout) -> Shadowrocket parse hỏng cả file
+// cấu hình -> VPN không bật được.
+// Ba test dưới đây khóa chặt: không Rule, không khóa lạ, pattern đơn giản.
+// ---------------------------------------------------------------------------
+const MODULE_FILES = [
+  "spotify-vn-mini.module",
+  "spotify-vn-lite.module",
+  "spotify-vn-premium.module",
+  "spotify-vn-capture.module",
+];
+const ALLOWED_KEYS = ["type", "pattern", "script-path", "requires-body", "max-size"];
+
+test("v3.0 module: khong con [Rule] / URL-REGEX / AND(PROTOCOL,UDP)", () => {
+  for (const name of MODULE_FILES) {
+    const mod = fs.readFileSync(path.join(ROOT, name), "utf8");
+    assert.ok(!/^\s*\[Rule\]/m.test(mod), name + ": van con [Rule]");
+    assert.ok(!/URL-REGEX/.test(mod), name + ": van con URL-REGEX");
+    assert.ok(!/AND,\(/.test(mod), name + ": van con AND,(");
+    assert.ok(!/PROTOCOL,UDP/.test(mod), name + ": van con PROTOCOL,UDP");
   }
-  assert.ok(/ad-logic/.test(mod), "van phai chan ad-logic");
 });
 
-test("v2.5 module: co entry request cho audio level + entry response cho net-fortune/jam", () => {
-  const mod = fs.readFileSync(MODULE_FILE, "utf8");
-  assert.ok(/type=http-request[^\n]*storage-resolve[^\n]*spotify-audio-level\.js/.test(mod), "thieu entry audio-level: " + mod.slice(0, 300));
+test("v3.0 module: moi dong [Script] chi dung khoa Shadowrocket ho tro", () => {
+  for (const name of MODULE_FILES) {
+    const mod = fs.readFileSync(path.join(ROOT, name), "utf8");
+    const inScript = mod.split(/^\[/m).find((b) => b.startsWith("Script]"));
+    assert.ok(inScript, name + ": thieu section [Script]");
+    const entries = inScript.split("\n").filter((l) => l.indexOf("type=") >= 0);
+    assert.ok(entries.length > 0, name + ": khong co entry nao");
+    for (const line of entries) {
+      const keys = line
+        .split(",")
+        .slice(1)
+        .map((p) => p.split("=")[0].trim())
+        .filter(Boolean);
+      for (const k of keys) {
+        assert.ok(ALLOWED_KEYS.indexOf(k) >= 0, name + ": khoa la `" + k + "` trong -> " + line.trim());
+      }
+      assert.ok(/script-path=https:\/\//.test(line), name + ": script-path khong phai https");
+    }
+  }
+});
+
+test("v3.0 module: pattern don gian (khong lookahead, khong escape dau /)", () => {
+  for (const name of MODULE_FILES) {
+    const mod = fs.readFileSync(path.join(ROOT, name), "utf8");
+    const pats = (mod.match(/pattern=[^,\n]+/g) || []).map((s) => s.slice(8));
+    assert.ok(pats.length > 0, name + ": khong co pattern");
+    for (const p of pats) {
+      assert.ok(!/\(\?[=!]/.test(p), name + ": pattern con lookahead -> " + p);
+      assert.ok(p.indexOf("\\/") < 0, name + ": pattern con \\/ -> " + p);
+      // phải là regex hợp lệ
+      new RegExp(p);
+    }
+  }
+});
+
+test("v3.0: lite/premium co entry audio-level, premium co entry capture", () => {
+  const lite = fs.readFileSync(path.join(ROOT, "spotify-vn-lite.module"), "utf8");
+  assert.ok(/spotify-audio-level\.js/.test(lite), "lite thieu audio-level");
   assert.ok(fs.existsSync(SCRIPT_AUDIO), "thieu scripts/spotify-audio-level.js");
-  const resp = mod.split("\n").find((l) => l.startsWith("SpotifyVN Response"));
-  assert.ok(resp && /net-fortune/.test(resp), "Response pattern thieu net-fortune");
-  assert.ok(resp && /jam_status/.test(resp), "Response pattern thieu jam_status");
-  assert.ok(resp && /device-capabilities/.test(resp), "Response pattern thieu device-capabilities");
+  const prem = fs.readFileSync(path.join(ROOT, "spotify-vn-premium.module"), "utf8");
+  assert.ok(/capture\.js/.test(prem), "premium thieu capture");
+  assert.ok(/drip\.js/.test(prem), "premium thieu drip");
 });
 
-test("v2.6 module: version string da len 2.6", () => {
-  const mod = fs.readFileSync(MODULE_FILE, "utf8");
-  assert.ok(/v2\.6/.test(mod.split("\n")[0]), mod.split("\n")[0]);
+test("v3.0: version string da len 3.0", () => {
+  for (const name of MODULE_FILES) {
+    const head = fs.readFileSync(path.join(ROOT, name), "utf8").split("\n")[0];
+    assert.ok(/v3\.0/.test(head), name + ": " + head);
+  }
+  assert.strictEqual(fs.readFileSync(path.join(ROOT, "VERSION"), "utf8").trim(), "3.0.0");
 });
 
 console.log("\n" + "-".repeat(62));

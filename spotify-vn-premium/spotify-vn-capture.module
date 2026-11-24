@@ -1,17 +1,11 @@
-#!name=Spotify VN CAPTURE (chỉ bắt gói + thông báo)
-#!desc=Bản RIÊNG để chẩn đoán: KHÔNG sửa gì, chỉ đọc. Mỗi response Spotify nổi banner trên máy (endpoint · HTTP · dung lượng · cờ 96/160/320 · premium/free · q=), đồng thời gom body thật bơm vào URL của request kế tiếp (zcap=) nên nằm trong log .db mày xuất ra. Dùng khi muốn xem app nhận đúng cái gì mà trang Chất lượng vẫn khoá.
+#!name=Spotify VN v3.0 CAPTURE
+#!desc=Chi bat goi + banner thong bao + gom du lieu ve log .db. KHONG sua gi. Dung khi can gui log cho Zaka doc.
 #!category=Spotify
 #!author=Zaka
-#!homepage=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-premium
-#!icon=https://raw.githubusercontent.com/luestr/IconResource/main/App_icon/120px/Spotify.png
-
-[Rule]
-AND,((DOMAIN-SUFFIX,spotify.com),(PROTOCOL,UDP)),REJECT
 
 [MITM]
-hostname = %APPEND% *.spotify.com, spotify.com
+hostname = %APPEND% *.spotify.com
 
 [Script]
-SpotifyVN Capture = type=http-response,pattern=^https:\/\/(?:[a-z0-9-]+\.)*spotify\.com(?::443)?\/(?!storage-resolve\/v2\/files\/audio\/(?:interactive|interactive_prefetch)\/\d)(?:.|\n)*,script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-premium/scripts/capture.js,requires-body=true,binary-body-mode=true,max-size=2097152,timeout=30
-
-SpotifyVN Drip = type=http-request,pattern=^https:\/\/(?:[a-z0-9-]+\.)*spotify\.com(?::443)?\/(?:gabo-receiver-service|reachability\/check|color-lyrics|gander\/v2|collection\/v2|net-fortune\/v2\/fortune|apresolve),script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-premium/scripts/drip.js,timeout=15
+SpotVN_Capture = type=http-response,pattern=^https://.*spotify\.com/,script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-premium/scripts/capture.js,requires-body=true,max-size=524288
+SpotVN_Drip = type=http-request,pattern=^https://.*spotify\.com/(gabo-receiver|reachability|color-lyrics|collection|apresolve|net-fortune),script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-premium/scripts/drip.js

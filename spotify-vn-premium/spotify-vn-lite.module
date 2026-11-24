@@ -1,0 +1,12 @@
+#!name=Spotify VN v3.0 LITE
+#!desc=MINI + ep cap am thanh trong URL + don header de response luon co body. Khong bat goi, khong banner. Day la ban nen dung hang ngay.
+#!category=Spotify
+#!author=Zaka
+
+[MITM]
+hostname = %APPEND% *.spotify.com
+
+[Script]
+SpotVN_Clean = type=http-request,pattern=^https://.*spotify\.com/,script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-premium/scripts/spotify-request.js
+SpotVN_Level = type=http-request,pattern=^https://.*spotify\.com/storage-resolve/,script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-premium/scripts/spotify-audio-level.js
+SpotVN_Patch = type=http-response,pattern=^https://.*spotify\.com/,script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-premium/scripts/spotify-premium.js,requires-body=true,max-size=524288
