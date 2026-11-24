@@ -1,6 +1,6 @@
 // ============================================================================
 // spotify-vn-premium / scripts/capture.js
-// Build: 2026-11-24 · v1.0.0 · type: http-response
+// Build: 2026-11-24 · v1.5.0 · type: http-response
 //
 // Khác scripts/debug.js ở một điểm quyết định: file này BẬT THÔNG BÁO của
 // Shadowrocket ($notify / $notification.post), nên mở app ra là thấy banner
@@ -132,10 +132,100 @@
     return s;
   }
 
+  // --------------------------------------------- v1.5: doc CAU TRUC protobuf
+  // Log Shadowrocket (file .db) chỉ có URL + rule, KHÔNG có body — nên từ log
+  // không thể biết được field nào quyết định chất lượng / Jam. Banner này in
+  // thẳng "field map" (số field + kiểu + giá trị) để chốt trong 1 lần gửi.
+  function readVarint(b, st) {
+    var value = 0;
+    var shift = 0;
+    while (st.i < b.length) {
+      var c = b[st.i++];
+      value += (c & 0x7f) * Math.pow(2, shift);
+      if (!(c & 0x80)) return value;
+      shift += 7;
+      if (shift > 49) break;
+    }
+    return -1;
+  }
+
+  function fieldMap(b) {
+    var out = [];
+    var st = { i: 0 };
+    while (st.i < b.length && out.length < 16) {
+      var key = readVarint(b, st);
+      if (key < 0) break;
+      var no = Math.floor(key / 8);
+      var wire = key % 8;
+      if (no <= 0 || no > 536870911) break;
+      if (wire === 0) {
+        var v = readVarint(b, st);
+        if (v < 0) break;
+        out.push(no + ":v" + v);
+      } else if (wire === 2) {
+        var n = readVarint(b, st);
+        if (n < 0 || st.i + n > b.length) break;
+        var seg = b.subarray(st.i, st.i + n);
+        st.i += n;
+        var asStr = "";
+        var printable = n > 0 && n <= 40;
+        for (var i = 0; i < n && printable; i++) {
+          if (seg[i] < 0x20 || seg[i] >= 0x7f) printable = false;
+          else asStr += String.fromCharCode(seg[i]);
+        }
+        out.push(no + (printable ? ':"' + asStr.slice(0, 24) + '"' : ":L" + n));
+      } else if (wire === 5) {
+        if (st.i + 4 > b.length) break;
+        st.i += 4;
+        out.push(no + ":f32");
+      } else if (wire === 1) {
+        if (st.i + 8 > b.length) break;
+        st.i += 8;
+        out.push(no + ":f64");
+      } else break;
+    }
+    return out.length ? out.join(" ") : "";
+  }
+
+  // Quét cả cây tìm số trông như bitrate (24000...320000) -> biết ngay field nào.
+  var BITRATES = [16000, 24000, 32000, 48000, 64000, 96000, 112000, 128000, 160000, 256000, 320000];
+  function scanBitrates(b, depth, hits) {
+    if (depth > 5 || hits.length > 8) return;
+    var st = { i: 0 };
+    while (st.i < b.length) {
+      var key = readVarint(b, st);
+      if (key < 0) return;
+      var wire = key % 8;
+      if (wire === 0) {
+        var v = readVarint(b, st);
+        if (v < 0) return;
+        if (BITRATES.indexOf(v) >= 0) hits.push(v);
+      } else if (wire === 2) {
+        var n = readVarint(b, st);
+        if (n < 0 || st.i + n > b.length) return;
+        var seg = b.subarray(st.i, st.i + n);
+        st.i += n;
+        if (n > 1 && n < 4000) scanBitrates(seg, depth + 1, hits);
+      } else if (wire === 5) st.i += 4;
+      else if (wire === 1) st.i += 8;
+      else return;
+      if (st.i > b.length) return;
+    }
+  }
+
+  var fmap = "";
+  var bitsFound = [];
+  if (kind !== "json" && kind !== "gzip") {
+    fmap = fieldMap(core);
+    try {
+      scanBitrates(core, 0, bitsFound);
+    } catch (e) {}
+  }
+
   var strs = stringsOf(core, 0);
 
   // Chuỗi nào quyết định "chất lượng" thì đưa lên đầu cho dễ đọc.
-  var INTEREST = /quality|bitrate|streaming|premium|free|restrict|lock|tier|product|plan|badge|label|color|colour|level|capab|entitle/i;
+  var INTEREST = /quality|bitrate|streaming|premium|free|restrict|lock|tier|product|plan|badge|label|color|colour|level|capab|entitle|jam|host|vorbis|mp3|format/i;
   var hot = [];
   var rest = [];
   for (var si = 0; si < strs.length; si++) {
@@ -208,6 +298,8 @@
     hexOf(core, 32) +
     (hot.length ? " | q=" + hot.join("|") : "") +
     (rest.length ? " | s=" + rest.join("|") : "") +
+    (fmap ? " | F=" + fmap : "") +
+    (bitsFound.length ? " | BR=" + bitsFound.join(",") : "") +
     (jsonPeek ? " >> " + jsonPeek : "");
 
   try {
@@ -235,7 +327,7 @@
     return String(h);
   }
 
-  var summary = (hot.length ? hot.join(" ") : "") + " " + jsonPeek + " " + hexOf(core, 16);
+  var summary = (hot.length ? hot.join(" ") : "") + " " + fmap + " " + jsonPeek + " " + hexOf(core, 16);
   var sig = hashCode(host + shortPath + "|" + len + "|" + summary);
   var kStore = "spotvn_capture_sig";
   var skipNotify = false;
@@ -259,9 +351,9 @@
     var shortTitle = shortPath.length > 46 ? "…" + shortPath.slice(-44) : shortPath;
     var textOut = jsonPeek
       ? jsonPeek
-      : hot.length
-      ? hot.join(" | ")
-      : rest.slice(0, 6).join(" | ");
+      : (hot.length ? hot.join(" | ") : rest.slice(0, 4).join(" | ")) +
+        (fmap ? " · F=" + fmap : "") +
+        (bitsFound.length ? " · BR=" + bitsFound.join(",") : "");
     post(kind + " " + status + " " + len + "B", shortTitle, (hasFree ? "FREE· " : "") + textOut);
   }
 

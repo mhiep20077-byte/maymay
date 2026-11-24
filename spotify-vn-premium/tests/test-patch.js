@@ -444,15 +444,18 @@ test("MITM hostname dùng wildcard hợp lệ (không dùng *-spclient)", () => 
 
 test("pattern trong module khớp đúng URL thật lấy từ log (shard gae2)", () => {
   const mod = fs.readFileSync(MODULE_FILE, "utf8");
-  const pats = [...mod.matchAll(/pattern=(\S+?),script-path=/g)].map((m) => new RegExp(m[1]));
-  assert.ok(pats.length === 2, "phải có 2 script (request + response)");
+  const all = [...mod.matchAll(/pattern=(\S+?),script-path=/g)].map((m) => new RegExp(m[1]));
+  assert.ok(all.length >= 2, "phải có ít nhất 2 script (request + response)");
   const real = [
     "https://gae2-spclient.spotify.com/remote-config-resolver/v3/configuration",
     "https://gae2-spclient.spotify.com/nebula/v1/configuration/attributes",
     "https://spclient.wg.spotify.com/bootstrap/v1/bootstrap",
     "https://gae2-spclient.spotify.com/user-customization-service/v1/customize",
   ];
-  for (const u of real) for (const re of pats) assert.ok(re.test(u), "không khớp: " + u);
+  // v2.5 có thêm script audio-level (chỉ khớp storage-resolve) nên chỉ lấy
+  // những pattern bao được toàn bộ URL thật ở trên.
+  const pats = all.filter((re) => real.every((u) => re.test(u)));
+  assert.ok(pats.length >= 2, "request + response phải cùng khớp URL thật, đang có " + pats.length);
   const notOurs = [
     "https://gae2-spclient.spotify.com/playplay/v1/key/abc",
     "https://spclient.wg.spotify.com/metadata/4/track/abc",
@@ -919,12 +922,21 @@ test("JSON: dang 0x1ED760 + badge_color cam -> 0xFFA500 (giu tien to 0x)", () =>
   assert.strictEqual(o.badge.color, "0xFFA500");
 });
 
-test("JSON: mau chu (text_color) KHONG bi to cam khi khong dat badge_text_color", () => {
+test("JSON v2.5: mac dinh = nen xanh #1ED760 + CHU DEN #121212 (giong vien Premium that)", () => {
   const body = Buffer.from(JSON.stringify({ badge: { text_color: "#1ED760", color: "#1ED760", label: "Premium" } }));
   const out = runResponse(body, URL_PLANROW);
   const o = JSON.parse(Buffer.from(out.body).toString("utf8"));
-  assert.strictEqual(o.badge.text_color, "#1ED760", "mau chu bi doi -> chu mat tren nen cam");
+  assert.strictEqual(o.badge.text_color, "#121212", "v2.5: chu phai la den tren nen xanh");
   assert.strictEqual(o.badge.color, "#1ED760");
+  assert.strictEqual(o.badge.label, "ToCam");
+});
+
+test("JSON v2.5: badge_text_color='' thi KHONG dung mau chu", () => {
+  const body = Buffer.from(JSON.stringify({ badge: { text_color: "#1ED760" } }));
+  const out = runResponse(body, URL_PLANROW, { argument: { badge_text_color: "" } });
+  // Không có gì đổi -> script trả body nguyên bản (out.body undefined).
+  const o = JSON.parse(Buffer.from(out.body || body).toString("utf8"));
+  assert.strictEqual(o.badge.text_color, "#1ED760");
 });
 
 test("JSON: dat badge_text_color thi mau chu doi theo", () => {
@@ -932,6 +944,25 @@ test("JSON: dat badge_text_color thi mau chu doi theo", () => {
   const out = runResponse(body, URL_PLANROW, { argument: { badge_text_color: "#1A1A1A" } });
   const o = JSON.parse(Buffer.from(out.body).toString("utf8"));
   assert.strictEqual(o.badge.text_color, "#1A1A1A");
+});
+
+test("JSON: badge mau xam (#535353) -> ep thanh nhan ToCam nen xanh la #1ED760", () => {
+  const body = Buffer.from(JSON.stringify({ badge: { text: "Free", color: "#535353", background: "535353" } }));
+  const out = runResponse(body, URL_PLANROW);
+  assert.ok(out && out.body, "khong patch badge xam");
+  const o = JSON.parse(Buffer.from(out.body).toString("utf8"));
+  assert.strictEqual(o.badge.text, "ToCam");
+  assert.strictEqual(o.badge.color, "#1ED760");
+  assert.strictEqual(o.badge.background, "1ED760");
+});
+
+test("JSON: tieu de tieng Viet 'Goi cua ban' -> 'Goi Premium cua ban'", () => {
+  const body = Buffer.from(JSON.stringify({ title: "Gói của bạn", badge: { text: "Premium" } }));
+  const out = runResponse(body, URL_PLANROW);
+  assert.ok(out && out.body, "khong patch tieu de");
+  const o = JSON.parse(Buffer.from(out.body).toString("utf8"));
+  assert.strictEqual(o.title, "Gói Premium của bạn");
+  assert.strictEqual(o.badge.text, "ToCam");
 });
 
 test("JSON: bitrate 96 / max_bitrate 160 -> 320", () => {
@@ -1013,23 +1044,183 @@ test("debug.js v1.4: mac dinh khong tu noi thong bao", () => {
   assert.strictEqual(notified, 0, "debug.js tu keu khi chua bat notify");
 });
 
-test("JSON: badge mau xam (#535353) -> ep thanh nhan ToCam nen xanh la #1ED760", () => {
-  const body = Buffer.from(JSON.stringify({ badge: { text: "Free", color: "#535353", background: "535353" } }));
-  const out = runResponse(body, URL_PLANROW);
-  assert.ok(out && out.body, "khong patch badge xam");
-  const o = JSON.parse(Buffer.from(out.body).toString("utf8"));
-  assert.strictEqual(o.badge.text, "ToCam");
-  assert.strictEqual(o.badge.color, "#1ED760");
-  assert.strictEqual(o.badge.background, "1ED760");
+
+// ============================================================================
+// v2.5.0 — dựa trên log bắt gói tài khoản Premium thật
+// ============================================================================
+
+const SCRIPT_AUDIO = path.join(ROOT, "scripts", "spotify-audio-level.js");
+
+function runAudioLevel(url, argument) {
+  let captured = null;
+  const sandbox = {
+    $request: { url, method: "GET", headers: {} },
+    $done: (o) => {
+      captured = o || {};
+    },
+    console: { log: () => {} },
+  };
+  if (argument !== undefined) sandbox.$argument = JSON.stringify(argument);
+  vm.createContext(sandbox);
+  vm.runInContext(fs.readFileSync(SCRIPT_AUDIO, "utf8"), sandbox, {
+    filename: "spotify-audio-level.js",
+  });
+  return captured;
+}
+
+test("v2.5 audio-level: cap 0 -> 2 (URL that trong log Free)", () => {
+  const src =
+    "https://gae2-spclient.spotify.com/storage-resolve/v2/files/audio/interactive/0/f15adbfc9c45bcf0aed6cef93a3aa0d0f8b6547a?product=0";
+  const out = runAudioLevel(src);
+  assert.strictEqual(
+    out.url,
+    "https://gae2-spclient.spotify.com/storage-resolve/v2/files/audio/interactive/2/f15adbfc9c45bcf0aed6cef93a3aa0d0f8b6547a?product=0"
+  );
 });
 
-test("JSON: tieu de tieng Viet 'Goi cua ban' -> 'Goi Premium cua ban'", () => {
-  const body = Buffer.from(JSON.stringify({ title: "Gói của bạn", badge: { text: "Premium" } }));
-  const out = runResponse(body, URL_PLANROW);
-  assert.ok(out && out.body, "khong patch tieu de");
+test("v2.5 audio-level: cap 1 -> 2, GIU NGUYEN ?product=0 (Premium that cung product=0)", () => {
+  const src =
+    "https://gae2-spclient.spotify.com/storage-resolve/v2/files/audio/interactive/1/2eeb5b3835091843438407571fd41cafc8b2ec18?product=0";
+  const out = runAudioLevel(src);
+  assert.ok(out.url, "khong doi URL");
+  assert.ok(out.url.includes("/interactive/2/"), out.url);
+  assert.ok(out.url.endsWith("?product=0"), out.url);
+  assert.ok(!out.url.includes("product=1"), "khong duoc doi product");
+});
+
+test("v2.5 audio-level: da cap 2 roi -> khong dung vao", () => {
+  const src =
+    "https://gae2-spclient.spotify.com/storage-resolve/v2/files/audio/interactive/2/abc123?product=0";
+  assert.strictEqual(runAudioLevel(src).url, undefined);
+});
+
+test("v2.5 audio-level: audio_level=keep -> tat han", () => {
+  const src =
+    "https://gae2-spclient.spotify.com/storage-resolve/v2/files/audio/interactive/0/abc123?product=0";
+  assert.strictEqual(runAudioLevel(src, { audio_level: "keep" }).url, undefined);
+});
+
+test("v2.5 audio-level: ep cap 1 (bai khong co ban 320)", () => {
+  const src =
+    "https://gae2-spclient.spotify.com/storage-resolve/v2/files/audio/interactive/0/abc123?product=0";
+  const out = runAudioLevel(src, { audio_level: 1 });
+  assert.ok(out.url.includes("/interactive/1/"), out.url);
+});
+
+test("v2.5 audio-level: URL la (khong phai storage-resolve) -> bo qua", () => {
+  assert.strictEqual(
+    runAudioLevel("https://gae2-spclient.spotify.com/playplay/v1/playable/abc").url,
+    undefined
+  );
+});
+
+const URL_FORTUNE =
+  "https://gae2-spclient.spotify.com/net-fortune/v2/fortune?bandwidth=7250555&request_type=interactive&content_type=music";
+const URL_CAPS =
+  "https://gae2-spclient.spotify.com/device-capabilities/v1/capabilities?device_type=smartphone";
+const URL_JAM =
+  "https://gae2-spclient.spotify.com/social-connect/v2/devices/e7a73210e182be63d37ca4f473f0de8e43a00cf7/jam_status?alt=protobuf";
+
+test("v2.5 net-fortune JSON: bitrate 96/160 -> 320", () => {
+  const body = Buffer.from(
+    JSON.stringify({ files: [{ file_id: "aa", bitrate: 96000 }, { file_id: "bb", bitrate: 160000 }] })
+  );
+  const out = runResponse(body, URL_FORTUNE);
+  assert.ok(out.body, "khong patch net-fortune");
   const o = JSON.parse(Buffer.from(out.body).toString("utf8"));
-  assert.strictEqual(o.title, "Gói Premium của bạn");
-  assert.strictEqual(o.badge.text, "ToCam");
+  assert.strictEqual(o.files[0].bitrate, 320000);
+  assert.strictEqual(o.files[1].bitrate, 320000);
+});
+
+test("v2.5 net-fortune protobuf: chuoi OGG_VORBIS_96 -> OGG_VORBIS_320", () => {
+  const body = Buffer.from(cat(fStr(1, "OGG_VORBIS_96"), fStr(2, "MP3_160"), fStr(3, "file_abc")));
+  const out = runResponse(body, URL_FORTUNE);
+  assert.ok(out.body, "khong patch");
+  const txt = Buffer.from(out.body).toString("latin1");
+  assert.ok(txt.includes("OGG_VORBIS_320"), txt);
+  assert.ok(txt.includes("MP3_320"), txt);
+  assert.ok(txt.includes("file_abc"), "chuoi khong lien quan bi doi: " + txt);
+});
+
+test("v2.5 net-fortune protobuf: varint 96000/160000 -> 320000, so khac giu nguyen", () => {
+  const body = Buffer.from(cat(fVarint(1, 96000), fVarint(2, 160000), fVarint(3, 7)));
+  const out = runResponse(body, URL_FORTUNE);
+  const fields = decode(out.body);
+  assert.strictEqual(fields[0].v, 320000);
+  assert.strictEqual(fields[1].v, 320000);
+  assert.strictEqual(fields[2].v, 7, "so khong phai bitrate bi doi");
+});
+
+test("v2.5 device-capabilities: quality HIGH -> VERY_HIGH + bitrate 320000", () => {
+  const body = Buffer.from(cat(fStr(1, "HIGH"), fVarint(2, 160000), fStr(3, "OGG_VORBIS_96")));
+  const out = runResponse(body, URL_CAPS);
+  assert.ok(out.body, "khong patch capabilities");
+  const txt = Buffer.from(out.body).toString("latin1");
+  assert.ok(txt.includes("VERY_HIGH"), txt);
+  assert.ok(txt.includes("OGG_VORBIS_320"), txt);
+  const bits = decode(out.body).filter((f) => f.w === 0).map((f) => f.v);
+  assert.deepStrictEqual(bits, [320000], "bitrate: " + JSON.stringify(bits));
+});
+
+test("v2.5 device-capabilities JSON: quality=LOW -> VERY_HIGH, bitrate 160 -> 320000", () => {
+  const body = Buffer.from(JSON.stringify({ audio_quality: "LOW", bitrate: 160000 }));
+  const out = runResponse(body, URL_CAPS);
+  const o = JSON.parse(Buffer.from(out.body).toString("utf8"));
+  assert.strictEqual(o.audio_quality, "VERY_HIGH");
+  assert.strictEqual(o.bitrate, 320000);
+});
+
+test("v2.5 jam_status: co bool 0 o field 1/2 -> 1, field khac va so khac giu nguyen", () => {
+  const body = Buffer.from(cat(fVarint(1, 0), fVarint(2, 0), fVarint(4, 0), fVarint(9, 5)));
+  const out = runResponse(body, URL_JAM);
+  assert.ok(out.body, "khong patch jam_status");
+  const fields = decode(out.body);
+  const map = {};
+  for (const f of fields) map[f.no] = f.v;
+  assert.strictEqual(map[1], 1);
+  assert.strictEqual(map[2], 1);
+  assert.strictEqual(map[4], 0, "field ngoai jam_fields khong duoc dung");
+  assert.strictEqual(map[9], 5);
+});
+
+test("v2.5 jam_status: jam_unlock=false -> khong dung gi", () => {
+  const body = Buffer.from(cat(fVarint(1, 0), fVarint(2, 0)));
+  const out = runResponse(body, URL_JAM, { argument: { jam_unlock: false } });
+  assert.strictEqual(out.body, undefined);
+});
+
+test("v2.5 jam_status JSON: is_host/can_join=false -> true", () => {
+  const body = Buffer.from(JSON.stringify({ is_host: false, can_join: false, other: false }));
+  const out = runResponse(body, URL_JAM);
+  const o = JSON.parse(Buffer.from(out.body).toString("utf8"));
+  assert.strictEqual(o.is_host, true);
+  assert.strictEqual(o.can_join, true);
+});
+
+test("v2.5 module: KHONG con REJECT net-fortune (service chon file nhac)", () => {
+  const mod = fs.readFileSync(MODULE_FILE, "utf8");
+  const rejectLines = mod
+    .split("\n")
+    .filter((l) => l.startsWith("URL-REGEX") && /REJECT\s*$/.test(l.trim()));
+  for (const l of rejectLines) {
+    assert.ok(!/net-fortune/.test(l), "con REJECT net-fortune: " + l);
+  }
+  assert.ok(/ad-logic/.test(mod), "van phai chan ad-logic");
+});
+
+test("v2.5 module: co entry request cho audio level + entry response cho net-fortune/jam", () => {
+  const mod = fs.readFileSync(MODULE_FILE, "utf8");
+  assert.ok(/type=http-request[^\n]*storage-resolve[^\n]*spotify-audio-level\.js/.test(mod), "thieu entry audio-level: " + mod.slice(0, 300));
+  assert.ok(fs.existsSync(SCRIPT_AUDIO), "thieu scripts/spotify-audio-level.js");
+  const resp = mod.split("\n").find((l) => l.startsWith("SpotifyVN Response"));
+  assert.ok(resp && /net-fortune/.test(resp), "Response pattern thieu net-fortune");
+  assert.ok(resp && /jam_status/.test(resp), "Response pattern thieu jam_status");
+  assert.ok(resp && /device-capabilities/.test(resp), "Response pattern thieu device-capabilities");
+});
+
+test("v2.5 module: version string da len 2.5", () => {
+  const mod = fs.readFileSync(MODULE_FILE, "utf8");
+  assert.ok(/v2\.5/.test(mod.split("\n")[0]), mod.split("\n")[0]);
 });
 
 console.log("\n" + "-".repeat(62));

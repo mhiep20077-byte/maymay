@@ -7,7 +7,7 @@ Module **Shadowrocket (小火箭)** gộp: bỏ quảng cáo + mở khoá Premiu
 > (script còn sống, chạy được) + phần chống 304 / chặn HTTP/3 mà bản đó thiếu.
 > Logic patch giữ nguyên gốc — tao chỉ thêm phần hạ tầng và test để biết nó thật sự chạy.
 
-![test](https://img.shields.io/badge/test-72%2F72%20pass-brightgreen)
+![test](https://img.shields.io/badge/test-90%2F90%20pass-brightgreen)
 
 ---
 
@@ -15,7 +15,7 @@ Module **Shadowrocket (小火箭)** gộp: bỏ quảng cáo + mở khoá Premiu
 
 ```
 bash tools/test.sh
-→ PASS: 72    FAIL: 0
+→ PASS: 90    FAIL: 0
 ```
 
 Test dựng protobuf giả đúng layout thật của Spotify rồi decode kết quả ra so từng field, gồm:
@@ -34,6 +34,19 @@ Bản 9.2.x không còn gọi `bootstrap`: 91% API đi qua shard `gae2-spclient.
 v1 vừa dùng wildcard MITM sai (`*-spclient…`) vừa nhắm sai endpoint → patch không chạy byte nào.
 v2 sửa cả hai + thêm rule chặn quảng cáo theo URL. Đọc `docs/CHAN-DOAN-V2.md` trước khi test.
 
+
+### v2.5.0 — bỏ chặn `net-fortune` (thủ phạm làm "Rất cao" không lên), ép cấp âm thanh trong URL, cờ Jam, badge chữ đen nền xanh
+
+- Log 276 request của nick Premium thật: **15/15 lần REJECT là `/net-fortune/v2/fortune`** —
+  service chọn file nhạc theo băng thông, không phải quảng cáo. Chặn nó = không bao giờ nhận bản 320.
+  v2.5 thả `net-fortune`, vẫn chặn `ads/v3`, `ad-logic`, `sponsoredplaylist`, `premium-marketing`.
+- `scripts/spotify-audio-level.js` (mới): đổi cấp trong đường dẫn
+  `/storage-resolve/v2/files/audio/interactive/<0|1>/<id>` → `2` ở bước **request**.
+- `net-fortune`: `96/160 → 320` (JSON + protobuf `OGG_VORBIS_*`, varint `96000/160000 → 320000`).
+- `device-capabilities`: `quality → VERY_HIGH`, `bitrate → 320000`.
+- Cờ Jam (`jam_status`, `connect-group`) → bật để app vẽ nút **Phối nhạc**.
+- Badge: nền `#1ED760` + **chữ đen `#121212`** + chữ **ToCam** (hồ sơ & trang quản lý gói).
+- Test: **90/90**. Chi tiết + giới hạn: `docs/V2.5-CHAT-LUONG-JAM.md`.
 
 ### v2.4.0 — badge ToCam nền xanh (như ảnh 3), chất lượng mọi endpoint, module capture có thông báo
 

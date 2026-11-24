@@ -1,6 +1,16 @@
 // ============================================================================
 // spotify-vn-premium / scripts/spotify-premium.js
-// Build: 2026-11-24 · v2.4.0
+// Build: 2026-11-24 · v2.5.0
+//
+// v2.5.0 — dựa trên log bắt gói của một tài khoản CÓ Premium thật:
+//   * net-fortune là service CHỌN FILE nhạc (kèm bitrate) -> module cũ REJECT
+//     chính nó, nên app không bao giờ thấy bản 320. v2.5 bỏ REJECT + nâng
+//     danh sách file khi response về (patchFortune).
+//   * Cấp âm thanh nằm trong ĐƯỜNG DẪN /storage-resolve/.../interactive/<cấp>/
+//     -> phải sửa ở bước request, xem scripts/spotify-audio-level.js.
+//   * device-capabilities: nâng danh sách chất lượng (patchCapabilities).
+//   * jam_status / connect-group: bật cờ Jam để app vẽ nút Phối nhạc (patchJam).
+//   * Badge mặc định = nền xanh #1ED760 + CHỮ ĐEN #121212 + chữ "ToCam".
 //
 // v2.0.0 — sửa gốc rễ "cài rồi mà không thấy gì":
 //   * Client Spotify 9.2.x KHÔNG còn gọi /bootstrap và /user-customization-service
@@ -17,7 +27,7 @@
 // tests/test-patch.js). Chỉ thêm header tương thích host ở trên cùng.
 // Chạy: http-response, requires-body + binary-body-mode (xem .module).
 // ============================================================================
-// ToCam — Shadowrocket adapted build
+// Spotify Premium — Shadowrocket adapted build
 // Adapted from xzavier-amico/modules (Loon plugin) spotify_premium.js.
 // The original rewriting logic below is byte-for-byte unchanged; only a small
 // host-compatibility header is prepended, because Shadowrocket's script
@@ -136,7 +146,7 @@
 
 // ==================== original script below (unmodified) ====================
 
-// ToCam — ad-free + shuffle unlock for Loon / Egern.
+// Spotify Premium — ad-free + shuffle unlock for Loon / Egern.
 //
 // Spotify answers /bootstrap and /user-customization-service with protobuf that
 // carries the account's product state and the remote config flags. This script
@@ -1052,15 +1062,17 @@
   //
   // Đổi được qua $argument:
   //   {"badge_text":"ToCam","badge_color":"#1ED760","badge_text_color":"#121212"}
-  // Mặc định v2.4: chữ "ToCam", nền XANH LÁ giống hệt viên Premium gốc trong app
-  // (ảnh 3), không phải nền cam như v2.3. Muốn cam: badge_color=#FFA500.
-  // badge_text_color bỏ trống = không đụng màu chữ (mặc định của app).
+  // Mặc định v2.5: chữ "ToCam", NỀN XANH LÁ #1ED760 + CHỮ ĐEN #121212 — đúng
+  // kiểu viên Premium gốc của Spotify (nền xanh, chữ đen) như ảnh tài khoản
+  // Premium thật, chỉ thay chữ Premium -> ToCam.
+  // Muốn cam: badge_color=#FFA500, badge_text_color=#121212.
+  // badge_text_color="" -> không đụng màu chữ (để app tự vẽ).
   const BADGE_TEXT =
     typeof opt.badge_text === "string" && opt.badge_text ? opt.badge_text : "ToCam";
   const BADGE_COLOR =
     typeof opt.badge_color === "string" && opt.badge_color ? opt.badge_color : "#1ED760";
   const BADGE_TEXT_COLOR =
-    typeof opt.badge_text_color === "string" && opt.badge_text_color ? opt.badge_text_color : "";
+    typeof opt.badge_text_color === "string" ? opt.badge_text_color : "#121212";
 
   const BADGE_KEY =
     /^(?:badge|badge_?text|badge_?label|badge_?title|badge_?name|badge_?value|pill|pill_?text|pill_?label|chip|chip_?text|chip_?label|tag)$/i;
@@ -1188,8 +1200,8 @@
           if (nv !== s) {
             f.p = TE.encode(nv);
             changed = true;
+            continue;
           }
-          continue;
         }
       }
       const inner = parse(f.p);
@@ -1449,14 +1461,304 @@
     return changed ? serialize(fields) : null;
   }
 
+  // ------------------------------- net-fortune + capabilities + Jam (v2.5.0)
+  //
+  // Ba thứ này lấy nguyên liệu từ log bắt gói của một tài khoản CÓ Premium:
+  //
+  //  a) /net-fortune/v2/fortune?bandwidth=...&request_type=interactive
+  //     Đây là service CHỌN FILE nhạc: client hỏi "tôi có ~7Mbps, bài này có
+  //     file nào?" rồi server trả danh sách file kèm bitrate/format. Free nhận
+  //     danh sách cấp thấp, Premium nhận thêm bản 320. Trong log trên, module
+  //     cũ REJECT chính endpoint này -> app không bao giờ thấy bản 320, tự
+  //     rơi về file mặc định. Đó là lỗi của module, không phải của server.
+  //     => v2.5: bỏ REJECT (xem .module) + nâng danh sách file khi nó về.
+  //
+  //  b) /device-capabilities/v1/capabilities?device_type=smartphone...
+  //     Máy tự khai nó hỗ trợ gì; response quyết định danh sách chất lượng
+  //     hiện trong Cài đặt. Nâng ở đây thì trang Chất lượng mới có "Rất cao".
+  //
+  //  c) /social-connect/v2/devices/<id>/jam_status?alt=protobuf
+  //     Trạng thái phiên Jam (Phối nhạc). Bật cờ host lên thì app mới vẽ nút.
+  //
+  // Nguyên tắc giữ nguyên như cả file: chỉ thay giá trị nào NHẬN RA CHẮC CHẮN
+  // (bitrate đúng bằng 96000/160000, chuỗi đúng bằng OGG_VORBIS_96...).
+  // Không đoán enum lạ, không thêm field mới.
+
+  const FORMAT_BARE = /^(?:(?:OGG_)?VORBIS|MP3|AAC|OGG|MP4)_([0-9]{2,3})$/i;
+  const QUALITY_WORDS = /^(?:VERY_LOW|LOW|MEDIUM|NORMAL|DEFAULT|HIGH|STANDARD|AUTO|LOW_?320)$/i;
+  const BITRATE_MAX = 320000;
+  const BITRATE_LOW = [24000, 32000, 48000, 64000, 96000, 112000, 128000, 160000];
+
+  const BITRATE_KEY2 = /(?:^|_)(?:bit_?rate|bitrate_?max|max_?bit_?rate|audio_?bit_?rate)$/i;
+  const QUALITY_KEY2 = /(?:^|_)(?:quality|audio_?quality|streaming_?quality|stream_?quality|max_?quality|preferred_?quality|level)$/i;
+
+  function bumpFormatString(s) {
+    const m = FORMAT_BARE.exec(s.trim());
+    if (!m) return null;
+    const n = parseInt(m[1], 10);
+    if (!(n > 0 && n < 320)) return null;
+    return s.trim().replace(/[0-9]{2,3}$/, "320");
+  }
+
+  function patchFortuneFields(fields, depth) {
+    if (depth > 8) return false;
+    let changed = false;
+    for (const f of fields) {
+      if (f.w === 0) {
+        if (BITRATE_LOW.indexOf(f.v) >= 0) {
+          f.v = BITRATE_MAX;
+          changed = true;
+        }
+        continue;
+      }
+      if (f.w !== 2 || !f.p || !f.p.length) continue;
+      if (f.p.length <= 48) {
+        const s = decodeUtf8(f.p);
+        if (s !== null && /^[\x20-\x7e]+$/.test(s)) {
+          const nx = bumpFormatString(s);
+          if (nx && nx !== s) {
+            f.p = TE.encode(nx);
+            changed = true;
+          }
+          continue;
+        }
+      }
+      const inner = parse(f.p);
+      if (inner && inner.length && patchFortuneFields(inner, depth + 1)) {
+        f.p = serialize(inner);
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
+  function patchFortuneJson(str) {
+    let root;
+    try {
+      root = JSON.parse(str);
+    } catch (e) {
+      return null;
+    }
+    if (!root || typeof root !== "object") return null;
+    let changed = false;
+    const walk = (node) => {
+      if (Array.isArray(node)) {
+        for (const v of node) walk(v);
+        return;
+      }
+      if (!node || typeof node !== "object") return;
+      for (const k of Object.keys(node)) {
+        const v = node[k];
+        if (typeof v === "number") {
+          if (BITRATE_KEY2.test(k) && BITRATE_LOW.indexOf(v) >= 0) {
+            node[k] = BITRATE_MAX;
+            changed = true;
+          }
+        } else if (typeof v === "string") {
+          const nx = bumpFormatString(v);
+          if (nx) {
+            node[k] = nx;
+            changed = true;
+          } else if (BITRATE_KEY2.test(k) && /^[0-9]{2,6}$/.test(v.trim())) {
+            const n = parseInt(v.trim(), 10);
+            if (BITRATE_LOW.indexOf(n) >= 0) {
+              node[k] = String(BITRATE_MAX);
+              changed = true;
+            }
+          }
+        } else walk(v);
+      }
+    };
+    walk(root);
+    return changed ? JSON.stringify(root) : null;
+  }
+
+  function patchFortune(b) {
+    if (b.length && (b[0] === 0x7b || b[0] === 0x5b)) {
+      const s = decodeUtf8(b);
+      if (s === null) return null;
+      const j = patchFortuneJson(s);
+      return j ? TE.encode(j) : null;
+    }
+    const fields = parse(b);
+    if (!fields || !fields.length) return null;
+    return patchFortuneFields(fields, 0) ? serialize(fields) : null;
+  }
+
+  function patchCapabilitiesJson(str) {
+    let root;
+    try {
+      root = JSON.parse(str);
+    } catch (e) {
+      return null;
+    }
+    if (!root || typeof root !== "object") return null;
+    let changed = false;
+    const walk = (node) => {
+      if (Array.isArray(node)) {
+        for (const v of node) walk(v);
+        return;
+      }
+      if (!node || typeof node !== "object") return;
+      for (const k of Object.keys(node)) {
+        const v = node[k];
+        if (typeof v === "string") {
+          const up = v.trim().toUpperCase();
+          if (QUALITY_KEY2.test(k) && QUALITY_WORDS.test(up) && up !== QUALITY_MAX) {
+            node[k] = QUALITY_MAX;
+            changed = true;
+            continue;
+          }
+          const nx = bumpFormatString(v);
+          if (nx) {
+            node[k] = nx;
+            changed = true;
+          }
+        } else if (typeof v === "number") {
+          if (BITRATE_KEY2.test(k) && BITRATE_LOW.indexOf(v) >= 0) {
+            node[k] = BITRATE_MAX;
+            changed = true;
+          }
+        } else if (typeof v === "boolean") {
+          if (/^(?:is_?premium|premium|has_?premium|hi_?fi|lossless|very_?high_?enabled)$/i.test(k) && !v) {
+            node[k] = true;
+            changed = true;
+          }
+        } else walk(v);
+      }
+    };
+    walk(root);
+    return changed ? JSON.stringify(root) : null;
+  }
+
+  function patchCapabilitiesFields(fields, depth) {
+    if (depth > 8) return false;
+    let changed = false;
+    for (const f of fields) {
+      if (f.w === 0) {
+        if (BITRATE_LOW.indexOf(f.v) >= 0) {
+          f.v = BITRATE_MAX;
+          changed = true;
+        }
+        continue;
+      }
+      if (f.w !== 2 || !f.p || !f.p.length) continue;
+      if (f.p.length <= 48) {
+        const s = decodeUtf8(f.p);
+        if (s !== null && /^[\x20-\x7e]+$/.test(s)) {
+          const up = s.trim().toUpperCase();
+          if (QUALITY_WORDS.test(up) && up !== QUALITY_MAX) {
+            f.p = TE.encode(QUALITY_MAX);
+            changed = true;
+            continue;
+          }
+          const nx = bumpFormatString(s);
+          if (nx) {
+            f.p = TE.encode(nx);
+            changed = true;
+          }
+          continue;
+        }
+      }
+      const inner = parse(f.p);
+      if (inner && inner.length && patchCapabilitiesFields(inner, depth + 1)) {
+        f.p = serialize(inner);
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
+  function patchCapabilities(b) {
+    if (b.length && (b[0] === 0x7b || b[0] === 0x5b)) {
+      const s = decodeUtf8(b);
+      if (s === null) return null;
+      const j = patchCapabilitiesJson(s);
+      return j ? TE.encode(j) : null;
+    }
+    const fields = parse(b);
+    if (!fields || !fields.length) return null;
+    return patchCapabilitiesFields(fields, 0) ? serialize(fields) : null;
+  }
+
+  // Jam / Phối nhạc. Response là protobuf (alt=protobuf) hoặc JSON tuỳ bản.
+  // Chỉ gạt cờ ở CẤP NGOÀI (depth 0) và chỉ với field number trong jam_fields
+  // (mặc định 1,2,3 = các cờ is_host / can_host / jam_enabled theo thứ tự
+  // thường gặp). Muốn tắt: $argument {"jam_unlock":false}.
+  const JAM_ON = flag(opt.jam_unlock, true);
+  const JAM_FIELDS = (function () {
+    const raw = typeof opt.jam_fields === "string" ? opt.jam_fields : "1,2,3";
+    const out = [];
+    for (const p of raw.split(",")) {
+      const n = parseInt(p.trim(), 10);
+      if (n >= 1 && n <= 15) out.push(n);
+    }
+    return out.length ? out : [1, 2, 3];
+  })();
+
+  function patchJamJson(str) {
+    let root;
+    try {
+      root = JSON.parse(str);
+    } catch (e) {
+      return null;
+    }
+    if (!root || typeof root !== "object") return null;
+    let changed = false;
+    const walk = (node, depth) => {
+      if (depth > 6 || !node || typeof node !== "object") return;
+      for (const k of Object.keys(node)) {
+        const v = node[k];
+        if (typeof v === "boolean") {
+          if (/(?:jam|host|join|guest|participant|session_?active|enabled|available|eligible)/i.test(k) && !v) {
+            node[k] = true;
+            changed = true;
+          }
+        } else if (v && typeof v === "object") walk(v, depth + 1);
+      }
+    };
+    walk(root, 0);
+    return changed ? JSON.stringify(root) : null;
+  }
+
+  function patchJamFields(fields) {
+    let changed = false;
+    for (const f of fields) {
+      if (f.w === 0 && f.v === 0 && JAM_FIELDS.indexOf(f.no) >= 0) {
+        f.v = 1;
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
+  function patchJam(b) {
+    if (!JAM_ON) return null;
+    if (b.length && (b[0] === 0x7b || b[0] === 0x5b)) {
+      const s = decodeUtf8(b);
+      if (s === null) return null;
+      const j = patchJamJson(s);
+      return j ? TE.encode(j) : null;
+    }
+    const fields = parse(b);
+    if (!fields || !fields.length) return null;
+    return patchJamFields(fields) ? serialize(fields) : null;
+  }
+
   // ------------------------------------------------------------------- entry
 
   const isPam = /(?:pam-view-service|pam\.v2|PamViewService|pam-account)/i.test(url);
   const isRestrict = /(?:clientrestrictions|GetRestrictedIntegrations)/i.test(url);
   const isSettings = /playback-settings/i.test(url);
+  const isFortune = /net-fortune/i.test(url);
+  const isJam = /(?:jam_status|connect-group)/i.test(url);
+  const isCaps = /device-capabilities/i.test(url);
 
   // Mọi hàm patch đều trả null khi không nhận ra -> $done({}) = body nguyên bản.
   function patchOne(b) {
+    if (isFortune) return patchFortune(b) || patchUniversal(b);
+    if (isJam) return patchJam(b);
+    if (isCaps) return patchCapabilities(b) || patchUniversal(b);
     if (isRestrict) return patchRestrictions(b);
     if (isPam) return patchPam(b);
     if (isSettings) return patchSettings(b);

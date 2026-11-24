@@ -1,5 +1,36 @@
 # Changelog
 
+## v2.5.0 — 2026-11-24
+
+### Bối cảnh
+Log bắt gói 276 request của một **nick có Premium thật** cho thấy module cũ tự bóp chất lượng:
+15/15 lần `REJECT` trên host spotify đều rơi vào `/net-fortune/v2/fortune` — service **chọn file
+nhạc theo băng thông** (`?bandwidth=…&request_type=interactive`), không phải quảng cáo.
+Chặn nó thì app không bao giờ nhận được bản 320 → "Rất cao" không bật được.
+
+### Sửa / thêm
+1. **Bỏ `net-fortune` khỏi rule REJECT** (giữ `ads/v3`, `ad-logic`, `sponsoredplaylist`,
+   `premium-marketing`). Test có case khẳng định module không còn chặn `net-fortune`.
+2. **`scripts/spotify-audio-level.js`** (mới, `type=http-request`): cấp âm thanh nằm trong
+   đường dẫn `/storage-resolve/v2/files/audio/interactive/<cấp>/<id>` → đổi `0|1` thành `2`
+   trước khi request đi. Giữ nguyên `?product=0` (nick Premium thật cũng gửi `product=0`).
+   Tắt: `{"audio_level":"keep"}`; ép cấp 1 cho bài không có bản 320: `{"audio_level":1}`.
+3. **`net-fortune`**: nâng bitrate trong danh sách file trả về — JSON `96/160 → 320`
+   (`bitrate`, `max_bitrate`, `bitrate_bps`), protobuf `OGG_VORBIS_96|160 → OGG_VORBIS_320`,
+   varint `96000/160000 → 320000`, số khác giữ nguyên.
+4. **`device-capabilities`**: `quality/streaming_quality` `LOW|NORMAL|HIGH|AUTO → VERY_HIGH`,
+   `bitrate 160 → 320000`.
+5. **Cờ Jam** (`jam_status`, `connect-group`): bool `false` ở field 1/2 → `true`
+   (nút Phối nhạc). Tắt: `{"jam_unlock":false}`.
+6. **Badge**: mặc định nền xanh `#1ED760` + **chữ đen `#121212`** + chữ `ToCam`
+   (đúng ảnh hồ sơ / trang quản lý gói); nhận `#RRGGBB`, `RRGGBB`, `rgb()`, `0xRRGGBB`.
+7. Test: **90/90** (thêm case audio level, net-fortune JSON/protobuf, device-capabilities,
+   jam, rule module v2.5). Chạy cả trước và sau `set-repo.sh`.
+
+### Không hứa
+320 kbps thật + tải offline vẫn do server cấp license theo tier. Nút Phối nhạc: feed không trả
+thì không chèn được. Chi tiết: `docs/V2.5-CHAT-LUONG-JAM.md`.
+
 ## v2.4.0 — 2026-11-24
 
 ### Bối cảnh
