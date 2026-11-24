@@ -29,17 +29,6 @@
   var shortPath = pathOnly.split("?")[0] || "/";
   var lowPath = pathOnly.toLowerCase();
 
-  // Bo qua cac file nhac, anh bia, lyrics, telemetry de khoi spam
-  if (
-    /\/(?:audio|video|image|scdn|lyrics|color-lyrics|track-metadata|playlist-metadata|canvaz|event-service|log-service|melody|head-files)\//i.test(
-      shortPath
-    ) ||
-    /\.(?:png|jpg|jpeg|webp|mp3|ogg|mp4|m4a|svg|css|js)(?:\?|$)/i.test(shortPath)
-  ) {
-    $done({});
-    return;
-  }
-
   // Phan nhom 3 muc tieu chinh
   function detectGroup(p) {
     if (
@@ -68,6 +57,12 @@
 
   var group = detectGroup(lowPath);
   if (!group) {
+    $done({});
+    return;
+  }
+
+  // Bo qua file anh/nhac tinh neu lo dinh ten
+  if (/\.(?:png|jpg|jpeg|webp|mp3|ogg|mp4|m4a|svg|css|js)(?:\?|$)/i.test(shortPath)) {
     $done({});
     return;
   }
