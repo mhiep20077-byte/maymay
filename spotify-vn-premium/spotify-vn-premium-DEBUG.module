@@ -1,0 +1,15 @@
+#!name=Spotify VN DEBUG (chỉ để xem log, không sửa gì)
+#!desc=Module chẩn đoán: in ra log từng response mà MITM bắt được (status, size, kiểu body, path, 12 byte đầu; nếu là JSON thì in luôn đoạn đầu đã che token). Không patch gì. Bật thay module chính, mở trang Tài khoản 1 lần, rồi gửi lại các dòng [spot-vn-dbg].
+#!category=Spotify
+#!author=Zaka
+#!homepage=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-premium
+#!icon=https://raw.githubusercontent.com/luestr/IconResource/main/App_icon/120px/Spotify.png
+
+[Rule]
+AND,((DOMAIN-SUFFIX,spotify.com),(PROTOCOL,UDP)),REJECT
+
+[Script]
+SpotifyVN Debug = type=http-response,pattern=^https:\/\/[a-z0-9.-]*spotify\.com(?::443)?\/(?:bootstrap|user-customization-service|nebula|remote-config-resolver|device-capabilities|identity|pam-view-service|playback-settings|clientrestrictions|user-profile|profile|account|product-state|product_state|subscription|attributes|catalogue|premium|checkout|payment|v3\/login|me(?:\/|\?|$)),script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-premium/scripts/debug.js,requires-body=true,binary-body-mode=true,max-size=1048576,timeout=20
+
+[MITM]
+hostname = %APPEND% *.spotify.com, spotify.com

@@ -1,10 +1,10 @@
 {
   "name": "spotify-vn-premium",
-  "version": "3.0.0",
+  "version": "2.4.0",
   "private": true,
-  "description": "Shadowrocket modules: Spotify patch (chat luong / badge / plan) - v3.0 fix loi VPN khong bat duoc",
+  "description": "Shadowrocket module: Spotify ad-free + client-side premium unlock (VN-tested setup)",
   "scripts": {
-    "test": "node tests/test-patch.js && node tests/test-capture.js"
+    "test": "node tests/test-patch.js"
   },
   "license": "UNLICENSED"
 }

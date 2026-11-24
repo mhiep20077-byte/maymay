@@ -1,6 +1,6 @@
 // ============================================================================
 // spotify-vn-premium / scripts/spotify-audio-level.js
-// Build: 2026-11-24 · v1.1.0 · type: http-request (chỉ sửa URL, không sửa body)
+// Build: 2026-11-24 · v1.0.0 · type: http-request (chỉ sửa URL, không sửa body)
 //
 // VI SAO CÓ FILE NÀY (bằng chứng từ log tài khoản Premium thật):
 //
@@ -48,8 +48,8 @@
   if (!(level >= 0 && level <= 4)) level = 2;
 
   // Chỉ đúng một hình dạng URL, không đoán mò:
-  //   /storage-resolve/v2/files/audio/(interactive|interactive_prefetch)/<cấp>/<file_id>[?query]
-  var m = /^(https?:\/\/[^/]+\/storage-resolve\/v2\/files\/audio\/(?:interactive|interactive_prefetch)\/)(\d)(\/[^?]*)(\?.*)?$/.exec(
+  //   /storage-resolve/v2/files/audio/interactive/<cấp>/<file_id>[?query]
+  var m = /^(https?:\/\/[^/]+\/storage-resolve\/v2\/files\/audio\/interactive\/)(\d)(\/[^?]*)(\?.*)?$/.exec(
     url
   );
   if (!m) {

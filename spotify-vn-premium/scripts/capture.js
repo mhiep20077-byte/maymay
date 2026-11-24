@@ -1,215 +1,360 @@
 // ============================================================================
 // spotify-vn-premium / scripts/capture.js
-// Build: 2026-11-24 · v2.0.0 · type: http-response · binary-body-mode
+// Build: 2026-11-24 · v1.5.0 · type: http-response
 //
-// MỤC ĐÍCH (đúng cái mày yêu cầu):
-//   1) Mỗi response Spotify khớp pattern -> NỔI THÔNG BÁO trên Shadowrocket,
-//      in ra endpoint + dung lượng + cờ quality/bitrate/premium tìm thấy trong
-//      payload, để mày thấy ngay app đang nhận gì.
-//   2) GOM payload thật vào hàng đợi. Một script khác (scripts/drip.js) sẽ
-//      bơm từng mẩu vào query của request Spotify kế tiếp, nên dữ liệu nằm
-//      luôn trong file log .db mà mày vẫn xuất ra gửi tao -> tao đọc được
-//      NGUYÊN BODY (không còn cảnh "log chỉ có URL, body bị nén").
+// Khác scripts/debug.js ở một điểm quyết định: file này BẬT THÔNG BÁO của
+// Shadowrocket ($notify / $notification.post), nên mở app ra là thấy banner
+// "[spot-vn] pam-view-service" ngay trên màn hình, không phải vào tab Log.
 //
-// Nó KHÔNG sửa gì: luôn $done({}) -> trả nguyên bản response.
+// Nó KHÔNG sửa gì — $done({}) = trả nguyên bản. Chỉ đọc rồi kêu.
 //
-// $argument (tuỳ chọn):
-//   {"notify":true,"dedupe_sec":60,"feed":true,"max_noti":40}
-//   notify=false  -> chỉ gom dữ liệu, không nổi banner
-//   feed=false    -> chỉ nổi banner, không gom dữ liệu về log
-//   dedupe_sec    -> cùng endpoint + cùng nội dung trong khoảng này thì im
-//   max_noti      -> trần số banner mỗi phiên (chống spam 276 cái)
+// Cách dùng:
+//   1. Bật spotify-vn-capture.module (tắt module chính cho khỏi lẫn).
+//   2. Mở Spotify -> Cài đặt -> Chất lượng nội dung, bấm vào dòng "Rất cao".
+//      Rồi mở trang Tài khoản. Mỗi response khớp pattern sẽ nổi 1 thông báo.
+//   3. Giữ thông báo (hoặc mở tab Log lọc "spot-vn-dbg") -> gửi lại cho tao.
+//
+// Tùy chỉnh qua $argument:
+//   {"notify":true,"max_body":180,"dedupe_sec":45,"only":"quality,premium,pam"}
+//   notify=false  -> chỉ ghi log, không nổi banner
+//   dedupe_sec    -> cùng một payload y hệt trong khoảng này thì không kêu lại
+//   only          -> chỉ bắt URL khớp chữ này (rỗng = bắt hết pattern)
 // ============================================================================
 
 (function () {
   "use strict";
 
-  // ---------------------------------------------------------------- tiện ích
-  function readArg() {
-    var a = {};
-    try {
-      var raw = typeof $argument !== "undefined" ? $argument : null;
-      if (typeof raw === "string" && raw) a = JSON.parse(raw) || {};
-      else if (raw && typeof raw === "object") a = raw;
-    } catch (e) {
-      a = {};
-    }
-    return a;
+  var opt = {};
+  try {
+    opt = typeof $argument === "string" ? JSON.parse($argument || "{}") : $argument || {};
+  } catch (e) {
+    opt = {};
   }
-  function num(v, d) {
-    var n = Number(v);
-    return isFinite(n) ? n : d;
-  }
-  function bool(v, d) {
-    if (v === undefined || v === null || v === "") return d;
-    if (v === false || v === 0) return false;
-    if (typeof v === "string" && /^(false|0|off|no|keep)$/i.test(v)) return false;
-    return true;
-  }
-  function store(key, val, write) {
-    try {
-      if (!write) return $persistentStore.read(key);
-      $persistentStore.write(String(val), key);
-      return val;
-    } catch (e) {
-      return null;
-    }
-  }
-  function notify(title, sub, body) {
-    try {
-      if (typeof $notification !== "undefined" && $notification && $notification.post)
-        $notification.post(title, sub || "", body || "");
-      else if (typeof $notify !== "undefined" && $notify) $notify(title, sub || "", body || "");
-    } catch (e) {}
-  }
-
-  var B64C = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-  function b64url(bytes) {
-    var out = "", i, b0, b1, b2;
-    for (i = 0; i < bytes.length; i += 3) {
-      b0 = bytes[i];
-      b1 = i + 1 < bytes.length ? bytes[i + 1] : 0;
-      b2 = i + 2 < bytes.length ? bytes[i + 2] : 0;
-      out +=
-        B64C.charAt(b0 >> 2) +
-        B64C.charAt(((b0 & 3) << 4) | (b1 >> 4)) +
-        (i + 1 < bytes.length ? B64C.charAt(((b1 & 15) << 2) | (b2 >> 6)) : "") +
-        (i + 2 < bytes.length ? B64C.charAt(b2 & 63) : "");
-    }
-    return out.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-  }
-
-  function toBytes(body) {
-    if (!body) return null;
-    if (body instanceof ArrayBuffer) return new Uint8Array(body);
-    if (ArrayBuffer.isView(body)) return new Uint8Array(body.buffer, body.byteOffset, body.byteLength);
-    if (typeof body === "string") {
-      var b = new Array(body.length);
-      for (var i = 0; i < body.length; i++) b[i] = body.charCodeAt(i) & 0xff;
-      return b;
-    }
-    if (body.length !== undefined) return body;
-    return null;
-  }
-
-  // Các đoạn ASCII in được >= 4 ký tự, nối bằng '|' — đọc được cả JSON lẫn protobuf.
-  function asciiText(bytes, cap) {
-    var out = "", run = "", n = Math.min(bytes.length, cap || 60000);
-    for (var i = 0; i < n; i++) {
-      var c = bytes[i];
-      if (c >= 32 && c <= 126) {
-        run += String.fromCharCode(c);
-      } else {
-        if (run.length >= 4) out += run + "|";
-        run = "";
-      }
-      if (out.length > 40000) break;
-    }
-    if (run.length >= 4) out += run;
-    return out;
-  }
-
-  function endpointName(url) {
-    var p = url.replace(/^https?:\/\//, "").split("?")[0];
-    var parts = p.split("/");
-    var path = parts.slice(1).join("/");
-    if (/net-fortune/.test(p)) return "net-fortune";
-    if (/storage-resolve/.test(p)) {
-      var m = /\/audio\/([a-z_]+)\/(\d+)\//.exec(p);
-      return "audio/" + (m ? m[1].slice(0, 9) + " lvl" + m[2] : "?");
-    }
-    if (/pam-view-service/.test(p)) return "pam-view";
-    if (/pam-account/.test(p)) return "pam-account";
-    if (/device-capabilities/.test(p)) return "device-cap";
-    if (/playback-settings/.test(p)) return "playback-set";
-    if (/user-customization-service/.test(p)) return "bootstrap-ucs";
-    if (/clientrestrictions/.test(p)) return "restrictions";
-    if (/product-?state/.test(p)) return "product-state";
-    if (/user-profile/.test(p)) return "user-profile";
-    if (/premium/.test(p)) return "premium/*";
-    if (/jam_status|connect-group/.test(p)) return "jam";
-    return (parts[parts.length - 1] || path || "?").slice(0, 22);
-  }
-
-  // ---------------------------------------------------------------- vào việc
-  var opt = readArg();
-  var NOTIFY = bool(opt.notify, true);
-  var FEED = bool(opt.feed, true);
-  var DEDUPE = num(opt.dedupe_sec, 60);
-  var MAX_NOTI = num(opt.max_noti, 40);
+  var flag = function (v, d) {
+    return v === undefined || v === null ? d : !(v === false || v === "false" || v === 0 || v === "0");
+  };
+  var notifyOn = flag(opt.notify, true);
+  var maxBody = Number(opt.max_body) > 0 ? Number(opt.max_body) : 180;
+  var dedupeSec = Number(opt.dedupe_sec) >= 0 ? Number(opt.dedupe_sec) : 45;
+  var only = typeof opt.only === "string" ? opt.only.trim() : "";
 
   var url = ($request && $request.url) || "";
-  var status = Number(($response && ($response.status || $response.statusCode)) || 0);
-  var body = $response ? ($response.body !== undefined ? $response.body : $response.bodyBytes) : null;
-  var bytes = toBytes(body);
-  var ep = endpointName(url);
-
-  // Banner tự kiểm tra: chứng minh module đã chạy (chỉ 1 lần / phiên cài).
-  if (!store("spotcap_boot")) {
-    store("spotcap_boot", "1", true);
-    notify("[spot-vn] CAPTURE ĐÃ CHẠY", "Module nạp thành công", "Mở Cài đặt > Chất lượng nội dung, rồi xem banner tiếp theo.");
+  if (only && url.toLowerCase().indexOf(only.toLowerCase()) < 0) {
+    var anyHit = false;
+    var parts = only.split(",");
+    for (var pi = 0; pi < parts.length; pi++) {
+      var p = parts[pi].trim();
+      if (p && url.toLowerCase().indexOf(p.toLowerCase()) >= 0) anyHit = true;
+    }
+    if (!anyHit) {
+      $done({});
+      return;
+    }
   }
 
+  var status = Number(($response && ($response.status || $response.statusCode)) || 0);
+
+  var body = $response && ($response.bodyBytes || $response.body);
+  var bytes = null;
+  if (body instanceof ArrayBuffer) bytes = new Uint8Array(body);
+  else if (body && ArrayBuffer.isView(body))
+    bytes = new Uint8Array(body.buffer, body.byteOffset, body.byteLength);
+  else if (typeof body === "string") bytes = new TextEncoder().encode(body);
+
+  var path = url.replace(/^https?:\/\//, "");
+  var host = path.split("/")[0] || "";
+  var shortPath = path.replace(/^[^/]+/, "").split("?")[0];
+
   if (!bytes || !bytes.length) {
-    if (NOTIFY) notify("[spot-vn] " + ep, "HTTP " + status + " · 0B", "Không có body (304/cache?) — mở lại trang đó lần nữa.");
+    if (notifyOn) post("empty", status + "B", shortPath.slice(0, 80) + " · không có body");
     $done({});
     return;
   }
 
-  var text = /storage-resolve|audio-akp|\.spotifycdn\.com/.test(url) ? "" : asciiText(bytes, 120000);
+  var len = bytes.length;
 
-  // ---------------------------------------------------------------- phân tích
-  var has320 = /OGG_VORBIS_320|320000|\b320\b/.test(text);
-  var has160 = /OGG_VORBIS_160|160000|\b160\b/.test(text);
-  var has96 = /OGG_VORBIS_96|96000|\b96\b/.test(text);
-  var premN = (text.match(/premium/gi) || []).length;
-  var freeN = (text.match(/[^a-z]free[^a-z]/gi) || []).length;
-  var qm = /(VERY[_-]?HIGH|VERYHIGH|HIGH|NORMAL|LOW|AUTOMATIC|AUTO)/.exec(text);
-  var pm = /"?(?:product|product_state|product-type)"?\s*[:=]\s*"?([a-z_]{2,14})/i.exec(text);
-  var rateM = /(?:bitrate|bit_rate|audio_quality|max_bitrate)"?\s*[:=]\s*"?(\d{2,7})/i.exec(text);
-  var lvlM = /\/audio\/([a-z_]+)\/(\d+)\//.exec(url);
-
-  var flags = [];
-  if (lvlM) flags.push("URL lvl" + lvlM[2] + "/" + lvlM[1]);
-  if (has320) flags.push("320 ✔");
-  if (has160) flags.push("160");
-  if (has96) flags.push("96");
-  if (qm) flags.push("q=" + qm[1]);
-  if (rateM) flags.push("bitrate=" + rateM[1]);
-  if (pm) flags.push("prod=" + pm[1]);
-  if (premN) flags.push("premium×" + premN);
-  if (freeN) flags.push("free×" + freeN);
-  if (!flags.length) flags.push("không thấy cờ nào");
-
-  var flagStr = flags.join(" ");
-
-  // ---------------------------------------------------------------- gom dữ liệu
-  if (FEED) {
-    var excerpt = "";
-    if (!/storage-resolve|audio-akp|\.spotifycdn\.com/.test(url)) {
-      excerpt = b64url(bytes.subarray ? bytes.subarray(0, 720) : bytes.slice(0, 720));
+  // ---------------------------------------------------------------- bóc gRPC
+  function grpcSplit(b) {
+    var frames = [];
+    var i = 0;
+    while (i + 5 <= b.length) {
+      var f = b[i];
+      if (f !== 0x00 && f !== 0x01 && f !== 0x80 && f !== 0x81) return null;
+      var n = ((b[i + 1] << 24) | (b[i + 2] << 16) | (b[i + 3] << 8) | b[i + 4]) >>> 0;
+      if (n > b.length - i - 5) return null;
+      frames.push({ flag: f, payload: b.subarray(i + 5, i + 5 + n) });
+      i += 5 + n;
     }
-    var line = ep.replace(/\|/g, "/") + "|" + status + "|" + bytes.length + "|" + flagStr.replace(/\|/g, "/") + "|" + (url.split("?")[0].slice(-90)) + "|" + excerpt + "\n";
-    var buf = (store("spotcap_buf") || "") + line;
-    if (buf.length > 45000) buf = buf.slice(buf.length - 45000);
-    store("spotcap_buf", buf, true);
+    if (i !== b.length || !frames.length) return null;
+    return frames;
   }
 
-  // ---------------------------------------------------------------- thông báo
-  var sentN = num(store("spotcap_noti_n"), 0);
-  var dedupeKey = "spotcap_d_" + ep.replace(/[^a-z0-9]/gi, "").slice(0, 12);
-  var last = store(dedupeKey) || "";
-  var sig = ep + "|" + flags.join(",");
-  var now = Date.now();
-  var lastSig = last.split("@")[0];
-  var lastAt = num(last.split("@")[1], 0);
-  var dup = lastSig === sig && now - lastAt < DEDUPE * 1000;
+  var frames = grpcSplit(bytes);
+  var core = bytes;
+  var kind;
 
-  if (NOTIFY && !dup && sentN < MAX_NOTI) {
-    store(dedupeKey, sig + "@" + now, true);
-    store("spotcap_noti_n", sentN + 1, true);
-    var sub = "HTTP " + status + " · " + bytes.length + "B · " + (ep.indexOf("audio") === 0 ? "" : "gom về log");
-    notify("[spot-vn] " + ep, sub, flagStr.slice(0, 160));
+  if (frames) {
+    var dataFrames = [];
+    for (var fi = 0; fi < frames.length; fi++) {
+      if (!(frames[fi].flag & 0x80) && !(frames[fi].flag & 0x01)) dataFrames.push(frames[fi]);
+    }
+    core = (dataFrames[0] || frames[0]).payload;
+    kind = "grpc" + (dataFrames.length > 1 ? "×" + dataFrames.length : "");
+  } else {
+    var b0 = bytes[0] || 0;
+    if (b0 === 0x7b || b0 === 0x5b) kind = "json";
+    else if (b0 === 0x1f || b0 === 0x78) kind = "gzip";
+    else kind = "proto";
+  }
+
+  // ------------------------------------------------- chuỗi ASCII trong payload
+  function stringsOf(b, max) {
+    var out = [];
+    var cur = "";
+    for (var i = 0; i < b.length && out.length < 40; i++) {
+      var c = b[i];
+      if (c >= 0x20 && c < 0x7f) {
+        cur += String.fromCharCode(c);
+        if (cur.length > 60) cur = cur.slice(0, 60);
+      } else {
+        if (cur.length >= 3) out.push(cur);
+        cur = "";
+      }
+    }
+    if (cur.length >= 3) out.push(cur);
+    return out;
+  }
+
+  function hexOf(b, n) {
+    var s = "";
+    var m = Math.min(b.length, n);
+    for (var i = 0; i < m; i++) s += ("0" + b[i].toString(16)).slice(-2);
+    return s;
+  }
+
+  // --------------------------------------------- v1.5: doc CAU TRUC protobuf
+  // Log Shadowrocket (file .db) chỉ có URL + rule, KHÔNG có body — nên từ log
+  // không thể biết được field nào quyết định chất lượng / Jam. Banner này in
+  // thẳng "field map" (số field + kiểu + giá trị) để chốt trong 1 lần gửi.
+  function readVarint(b, st) {
+    var value = 0;
+    var shift = 0;
+    while (st.i < b.length) {
+      var c = b[st.i++];
+      value += (c & 0x7f) * Math.pow(2, shift);
+      if (!(c & 0x80)) return value;
+      shift += 7;
+      if (shift > 49) break;
+    }
+    return -1;
+  }
+
+  function fieldMap(b) {
+    var out = [];
+    var st = { i: 0 };
+    while (st.i < b.length && out.length < 16) {
+      var key = readVarint(b, st);
+      if (key < 0) break;
+      var no = Math.floor(key / 8);
+      var wire = key % 8;
+      if (no <= 0 || no > 536870911) break;
+      if (wire === 0) {
+        var v = readVarint(b, st);
+        if (v < 0) break;
+        out.push(no + ":v" + v);
+      } else if (wire === 2) {
+        var n = readVarint(b, st);
+        if (n < 0 || st.i + n > b.length) break;
+        var seg = b.subarray(st.i, st.i + n);
+        st.i += n;
+        var asStr = "";
+        var printable = n > 0 && n <= 40;
+        for (var i = 0; i < n && printable; i++) {
+          if (seg[i] < 0x20 || seg[i] >= 0x7f) printable = false;
+          else asStr += String.fromCharCode(seg[i]);
+        }
+        out.push(no + (printable ? ':"' + asStr.slice(0, 24) + '"' : ":L" + n));
+      } else if (wire === 5) {
+        if (st.i + 4 > b.length) break;
+        st.i += 4;
+        out.push(no + ":f32");
+      } else if (wire === 1) {
+        if (st.i + 8 > b.length) break;
+        st.i += 8;
+        out.push(no + ":f64");
+      } else break;
+    }
+    return out.length ? out.join(" ") : "";
+  }
+
+  // Quét cả cây tìm số trông như bitrate (24000...320000) -> biết ngay field nào.
+  var BITRATES = [16000, 24000, 32000, 48000, 64000, 96000, 112000, 128000, 160000, 256000, 320000];
+  function scanBitrates(b, depth, hits) {
+    if (depth > 5 || hits.length > 8) return;
+    var st = { i: 0 };
+    while (st.i < b.length) {
+      var key = readVarint(b, st);
+      if (key < 0) return;
+      var wire = key % 8;
+      if (wire === 0) {
+        var v = readVarint(b, st);
+        if (v < 0) return;
+        if (BITRATES.indexOf(v) >= 0) hits.push(v);
+      } else if (wire === 2) {
+        var n = readVarint(b, st);
+        if (n < 0 || st.i + n > b.length) return;
+        var seg = b.subarray(st.i, st.i + n);
+        st.i += n;
+        if (n > 1 && n < 4000) scanBitrates(seg, depth + 1, hits);
+      } else if (wire === 5) st.i += 4;
+      else if (wire === 1) st.i += 8;
+      else return;
+      if (st.i > b.length) return;
+    }
+  }
+
+  var fmap = "";
+  var bitsFound = [];
+  if (kind !== "json" && kind !== "gzip") {
+    fmap = fieldMap(core);
+    try {
+      scanBitrates(core, 0, bitsFound);
+    } catch (e) {}
+  }
+
+  var strs = stringsOf(core, 0);
+
+  // Chuỗi nào quyết định "chất lượng" thì đưa lên đầu cho dễ đọc.
+  var INTEREST = /quality|bitrate|streaming|premium|free|restrict|lock|tier|product|plan|badge|label|color|colour|level|capab|entitle|jam|host|vorbis|mp3|format/i;
+  var hot = [];
+  var rest = [];
+  for (var si = 0; si < strs.length; si++) {
+    var sv = strs[si];
+    if (INTEREST.test(sv) && hot.length < 10) hot.push(sv);
+    else if (rest.length < 8) rest.push(sv);
+  }
+
+  // JSON: rút đúng các cặp key=value liên quan, thay vì đổ cả khối.
+  var jsonPeek = "";
+  var KEY_OF_INTEREST = /quality|bitrate|streaming|premium|free|restrict|lock|tier|product|plan|badge|label|colou?r|level|capab|entitle|ads/i;
+  if (kind === "json") {
+    try {
+      var txt = "";
+      var tn = Math.min(core.length, 20000);
+      for (var j = 0; j < tn; j++) txt += String.fromCharCode(core[j]);
+      var obj = JSON.parse(txt);
+      var pairs = [];
+      var walkJson = function (node, prefix) {
+        if (pairs.length >= 14) return;
+        if (node && typeof node === "object") {
+          for (var k in node) {
+            if (!Object.prototype.hasOwnProperty.call(node, k)) continue;
+            var v = node[k];
+            var pk = prefix ? prefix + "." + k : k;
+            if (v && typeof v === "object") walkJson(v, pk);
+            else if (KEY_OF_INTEREST.test(k)) {
+              pairs.push(pk + "=" + String(v).slice(0, 40));
+            }
+          }
+        }
+      };
+      walkJson(obj, "");
+      jsonPeek = pairs.join(" ");
+    } catch (e) {
+      jsonPeek = "";
+    }
+  }
+
+  var hasFree = /spotify\s*_?\s*free|"free"|free_tier|free-tier|FREE\b/i.test(
+    (function () {
+      try {
+        var t = "";
+        var n = Math.min(core.length, 8192);
+        for (var i = 0; i < n; i++) t += String.fromCharCode(core[i]);
+        return t;
+      } catch (e) {
+        return "";
+      }
+    })()
+  )
+    ? " HAS_FREE"
+    : "";
+
+  var line =
+    "[spot-vn-dbg] " +
+    status +
+    " " +
+    len +
+    "B " +
+    kind +
+    "/core=" +
+    core.length +
+    "B" +
+    hasFree +
+    " " +
+    host +
+    shortPath.slice(0, 80) +
+    " | " +
+    hexOf(core, 32) +
+    (hot.length ? " | q=" + hot.join("|") : "") +
+    (rest.length ? " | s=" + rest.join("|") : "") +
+    (fmap ? " | F=" + fmap : "") +
+    (bitsFound.length ? " | BR=" + bitsFound.join(",") : "") +
+    (jsonPeek ? " >> " + jsonPeek : "");
+
+  try {
+    console.log(line);
+  } catch (e) {}
+
+  // ------------------------------------------------------------- thông báo
+  function post(kindLabel, subtitle, text) {
+    var title = "[spot-vn] " + (shortPath.split("/").filter(Boolean).slice(-1)[0] || host);
+    var sub = (subtitle ? subtitle + " · " : "") + kindLabel;
+    var bodyText = String(text || "").slice(0, maxBody);
+    try {
+      if (typeof $notify === "function") {
+        $notify(title, sub, bodyText);
+      } else if (typeof $notification !== "undefined" && $notification && typeof $notification.post === "function") {
+        $notification.post(title, sub, bodyText);
+      }
+    } catch (e) {}
+  }
+
+  // Cùng một payload y hệt (mở lại trang) thì đừng kêu lại — tránh 20 banner.
+  function hashCode(s) {
+    var h = 5381;
+    for (var i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+    return String(h);
+  }
+
+  var summary = (hot.length ? hot.join(" ") : "") + " " + fmap + " " + jsonPeek + " " + hexOf(core, 16);
+  var sig = hashCode(host + shortPath + "|" + len + "|" + summary);
+  var kStore = "spotvn_capture_sig";
+  var skipNotify = false;
+
+  if (dedupeSec > 0) {
+    try {
+      if (typeof $persistentStore !== "undefined" && $persistentStore && $persistentStore.read) {
+        var prev = $persistentStore.read(kStore) || "";
+        if (prev.indexOf(sig + "@") === 0) {
+          var ts = Number(prev.split("@")[1] || 0);
+          if (Date.now() - ts < dedupeSec * 1000) skipNotify = true;
+        }
+        if (!skipNotify && $persistentStore.write) {
+          $persistentStore.write(sig + "@" + Date.now(), kStore);
+        }
+      }
+    } catch (e) {}
+  }
+
+  if (notifyOn && !skipNotify) {
+    var shortTitle = shortPath.length > 46 ? "…" + shortPath.slice(-44) : shortPath;
+    var textOut = jsonPeek
+      ? jsonPeek
+      : (hot.length ? hot.join(" | ") : rest.slice(0, 4).join(" | ")) +
+        (fmap ? " · F=" + fmap : "") +
+        (bitsFound.length ? " · BR=" + bitsFound.join(",") : "");
+    post(kind + " " + status + " " + len + "B", shortTitle, (hasFree ? "FREE· " : "") + textOut);
   }
 
   $done({});
