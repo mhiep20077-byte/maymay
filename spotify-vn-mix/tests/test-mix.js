@@ -216,6 +216,25 @@ test("SelectedListContent (/signals & /diff): bơm can-view-transition='true', m
   assert(resDiff && resDiff.body, "Phải nâng cấp gói /diff để mở nút Phối (f17=1, f18, f22)");
   const bDiff = Buffer.from(resDiff.body);
   assert(bDiff.includes(Buffer.from("autoplay", "utf8")), "Phải bơm f22 chứa signal descriptor 'auto' & 'autoplay'");
+
+  // 8. Gói /extended-metadata/v0/extended-metadata (extension_kind = 235: spotify.traits.v1.MixabilityTrait 59B)
+  const extMetaMissing = cat(
+    fBytes(2, cat(
+      fBytes(1, cat(fVarint(1, 200), fVarint(2, 86400), fVarint(3, 2592000))),
+      fVarint(2, 235),
+      fBytes(3, cat(
+        fBytes(1, cat(fVarint(1, 336))),
+        fStr(2, "spotify:playlist:4YvPfs7WpoADAovoaFjRPQ")
+      ))
+    ))
+  );
+  const resExt = runResponseScript(
+    "https://spclient.wg.spotify.com/extended-metadata/v0/extended-metadata",
+    extMetaMissing
+  );
+  assert(resExt && resExt.body, "Phải bơm MixabilityTrait (59B) vào extended-metadata kind=235");
+  const bExt = Buffer.from(resExt.body);
+  assert(bExt.includes(Buffer.from("type.googleapis.com/spotify.traits.v1.MixabilityTrait", "utf8")), "Phải chứa type_url MixabilityTrait");
 });
 
 console.log("\n--------------------------------------------------------------");

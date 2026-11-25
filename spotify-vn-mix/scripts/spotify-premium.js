@@ -2282,8 +2282,101 @@
     ["mix-type", "allow-custom"],
     ["automix.queue", "true"],
     ["automix.autoplay", "true"],
-    ["automix.ignore_settings", "true"]
+    ["automix.ignore_setting", "true"]
   ];
+
+  // Bắt từ ảnh #27 (nut_phoi_v4):
+  // Khi mở playlist, client gọi /extended-metadata/v0/extended-metadata với
+  // extension_kind = 235 (type.googleapis.com/spotify.traits.v1.MixabilityTrait, đúng 59B):
+  //   0a 35 "type.googleapis.com/spotify.traits.v1.MixabilityTrait" (55B)
+  //   12 02 08 01 (MixabilityTrait { f1 = 1 }, 4B) -> tổng 59B!
+  // Trên acc thường hoặc playlist chưa mở Phối, server trả status != 200 hoặc f3 rỗng ("")
+  // khiến client coi playlist không hỗ trợ Mix (is_mixable = false) và ẩn nút [Phối]!
+  const MIXABILITY_TRAIT_ANY = serialize([
+    fieldString(1, "type.googleapis.com/spotify.traits.v1.MixabilityTrait"),
+    fieldBytes(2, serialize([fieldVarint(1, 1)]))
+  ]);
+
+  function patchExtendedMetadata(b) {
+    if (!PLAYLIST_MIX_ON || !b || !b.length) return null;
+    if (b[0] === 0x7b || b[0] === 0x5b) return null;
+    const fields = parse(b);
+    if (!fields || !fields.length) return null;
+    let changed = false;
+
+    for (const f of fields) {
+      if (f.no !== 2 || f.w !== 2 || !f.p || !f.p.length) continue;
+      const arr = parse(f.p);
+      if (!arr || !arr.length) continue;
+      const kindField = first(arr, 2);
+      if (!kindField || kindField.w !== 0 || kindField.v !== 235) continue;
+
+      // Đảm bảo header cấp mảng (f1) có status = 200
+      const arrHdr = first(arr, 1);
+      if (arrHdr && arrHdr.w === 2 && arrHdr.p) {
+        const hdrFields = parse(arrHdr.p);
+        if (hdrFields) {
+          const st = first(hdrFields, 1);
+          if (st && st.w === 0 && st.v !== 200) {
+            st.v = 200;
+            arrHdr.p = serialize(hdrFields);
+            changed = true;
+          }
+        }
+      }
+
+      let arrChanged = false;
+      for (const ef of arr) {
+        if (ef.no !== 3 || ef.w !== 2 || !ef.p || !ef.p.length) continue;
+        const ent = parse(ef.p);
+        if (!ent || !ent.length) continue;
+
+        // 1) Sửa status trong ExtensionHeader (f1.f1) về 200 (08 c8 01) nếu đang là 404/403/336 (08 b0 02)
+        let entHdr = first(ent, 1);
+        if (entHdr && entHdr.w === 2 && entHdr.p) {
+          const eh = parse(entHdr.p);
+          if (eh) {
+            const est = first(eh, 1);
+            if (est && est.w === 0 && est.v !== 200) {
+              est.v = 200;
+              entHdr.p = serialize(eh);
+              arrChanged = true;
+            } else if (!est) {
+              eh.unshift(fieldVarint(1, 200));
+              entHdr.p = serialize(eh);
+              arrChanged = true;
+            }
+          }
+        } else if (!entHdr) {
+          ent.unshift(fieldBytes(1, serialize([fieldVarint(1, 200)])));
+          arrChanged = true;
+        }
+
+        // 2) Bơm hoặc ghi đè f3 = MIXABILITY_TRAIT_ANY (59B)
+        const extData = first(ent, 3);
+        if (extData && extData.w === 2) {
+          if (!same(extData.p, MIXABILITY_TRAIT_ANY)) {
+            extData.p = MIXABILITY_TRAIT_ANY;
+            arrChanged = true;
+          }
+        } else if (!extData) {
+          ent.push(fieldBytes(3, MIXABILITY_TRAIT_ANY));
+          arrChanged = true;
+        }
+
+        if (arrChanged) {
+          ef.p = serialize(ent);
+          changed = true;
+        }
+      }
+
+      if (changed) {
+        f.p = serialize(arr);
+      }
+    }
+
+    return changed ? serialize(fields) : null;
+  }
 
   // Bắt từ ảnh #0 & #15 (4YvPfs7WpoADAovoaFjRPQ/diff 405B) vs #22 (37i9dQZF1Fs6Dvo6yu9lo4/diff 348B):
   // Playlist CÓ nút Phối có thêm 3 trường ở cấp gốc của SelectedListContent:
@@ -2457,11 +2550,13 @@
   const isPlaylist =
     !/(?:permission|\/list\/recents\/|\/count(?:\?|$)|\/members(?:\?|$))/i.test(url) &&
     /(?:\/playlist-v2\/v2\/playlist\/|\/playlist\/v2\/playlist\/|\/signals(?:\?|$)|\/diff(?:\?|$))/i.test(url);
+  const isExtMeta = /extended-metadata/i.test(url);
 
   function patchOne(b) {
     if (isBadgeDevice) return null;
     if (isGetYourPremiumBadge) return patchBadgeExact(b);
     if (isGetPremiumPlanRow) return patchPlanRow(b) || patchPam(b);
+    if (isExtMeta) return patchExtendedMetadata(b);
     if (isPlaylist) return patchPlaylistMix(b);
     if (isFortune) return patchFortune(b) || patchUniversal(b);
     if (isJam) return patchJamWrapped(b);
@@ -2504,11 +2599,13 @@
   }
 
   const isConfigOrAttr = /(?:v3\/configuration|configuration\/attributes|user-customization-service|bootstrap)/i.test(url);
-  if (flag(opt.notify, true) && (isPlaylist || isGetYourPremiumBadge || isGetPremiumPlanRow || isConfigOrAttr)) {
+  if (flag(opt.notify, true) && (isPlaylist || isExtMeta || isGetYourPremiumBadge || isGetPremiumPlanRow || isConfigOrAttr)) {
     try {
       if (typeof $notification !== "undefined" && $notification && typeof $notification.post === "function") {
         const pth = url.replace(/^https?:\/\/[^/]+/, "").split("?")[0];
-        const label = isPlaylist
+        const label = isExtMeta
+          ? "MixabilityTrait (235 · 59B)"
+          : isPlaylist
           ? "Nút Phối (f17/f18/f22)"
           : isConfigOrAttr
           ? "Cấu hình Phối (Config/Attr)"
