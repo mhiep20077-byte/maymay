@@ -202,7 +202,7 @@ test("SelectedListContent (/signals & /diff): bơm can-view-transition='true', m
   );
   assert(!resPerm || !resPerm.body, "Tuyệt đối không được sửa gói permission/base 11B");
 
-  // 7. Gói /playlist/v2/playlist/<id>/diff (405B chỉ có f1 + f6 + f17=0 + f18 thiếu quyền) -> nâng f17=1, f18 đầy đủ và bơm f22 (auto + autoplay)
+  // 7. Gói /playlist/v2/playlist/<id>/diff (405B chỉ có f1 + f6 + f17=0 + f18 thiếu quyền) -> nâng f17=1, f18=215B đầy đủ và bơm f22 (auto + autoplay + mix + jam)
   const diffNoMix = cat(
     fBytes(1, rev24),
     fBytes(6, cat(fBytes(1, rev24), fBytes(3, rev24))),
@@ -213,11 +213,12 @@ test("SelectedListContent (/signals & /diff): bơm can-view-transition='true', m
     "https://spclient.wg.spotify.com/playlist/v2/playlist/7ejDn9p23d5bQEgtQMxzla/diff",
     diffNoMix
   );
-  assert(resDiff && resDiff.body, "Phải nâng cấp gói /diff để mở nút Phối (f17=1, f18, f22)");
+  assert(resDiff && resDiff.body, "Phải nâng cấp gói /diff để mở nút Phối (f17=1, f18=215B, f22)");
   const bDiff = Buffer.from(resDiff.body);
   assert(bDiff.includes(Buffer.from("autoplay", "utf8")), "Phải bơm f22 chứa signal descriptor 'auto' & 'autoplay'");
+  assert(bDiff.includes(Buffer.from("c16a3e0f", "utf8")), "Phải bơm f22 chứa lens 'mix' (c16a3e0f)");
 
-  // 8. Gói /extended-metadata/v0/extended-metadata (extension_kind = 235: spotify.traits.v1.MixabilityTrait 59B)
+  // 8. Gói /extended-metadata/v0/extended-metadata (extension_kind = 235: MixabilityTrait 59B & extension_kind = 170: AutoLens 'mix' 66B)
   const extMetaMissing = cat(
     fBytes(2, cat(
       fBytes(1, cat(fVarint(1, 200), fVarint(2, 86400), fVarint(3, 2592000))),
@@ -226,15 +227,24 @@ test("SelectedListContent (/signals & /diff): bơm can-view-transition='true', m
         fBytes(1, cat(fVarint(1, 336))),
         fStr(2, "spotify:playlist:4YvPfs7WpoADAovoaFjRPQ")
       ))
+    )),
+    fBytes(2, cat(
+      fBytes(1, cat(fVarint(1, 200), fVarint(2, 60), fVarint(3, 2592000))),
+      fVarint(2, 170),
+      fBytes(3, cat(
+        fBytes(1, cat(fVarint(1, 304))),
+        fStr(2, "spotify:playlist:4YvPfs7WpoADAovoaFjRPQ")
+      ))
     ))
   );
   const resExt = runResponseScript(
     "https://spclient.wg.spotify.com/extended-metadata/v0/extended-metadata",
     extMetaMissing
   );
-  assert(resExt && resExt.body, "Phải bơm MixabilityTrait (59B) vào extended-metadata kind=235");
+  assert(resExt && resExt.body, "Phải bơm MixabilityTrait (59B) + AutoLens (66B) vào extended-metadata");
   const bExt = Buffer.from(resExt.body);
   assert(bExt.includes(Buffer.from("type.googleapis.com/spotify.traits.v1.MixabilityTrait", "utf8")), "Phải chứa type_url MixabilityTrait");
+  assert(bExt.includes(Buffer.from("type.googleapis.com/spotify.autolensextension.v1.AutoLens", "utf8")), "Phải chứa type_url AutoLens");
 });
 
 console.log("\n--------------------------------------------------------------");

@@ -2285,16 +2285,19 @@
     ["automix.ignore_setting", "true"]
   ];
 
-  // Bắt từ ảnh #27 (nut_phoi_v4):
-  // Khi mở playlist, client gọi /extended-metadata/v0/extended-metadata với
-  // extension_kind = 235 (type.googleapis.com/spotify.traits.v1.MixabilityTrait, đúng 59B):
-  //   0a 35 "type.googleapis.com/spotify.traits.v1.MixabilityTrait" (55B)
-  //   12 02 08 01 (MixabilityTrait { f1 = 1 }, 4B) -> tổng 59B!
-  // Trên acc thường hoặc playlist chưa mở Phối, server trả status != 200 hoặc f3 rỗng ("")
-  // khiến client coi playlist không hỗ trợ Mix (is_mixable = false) và ẩn nút [Phối]!
+  // Bắt từ ảnh #27 (nut_phoi_v4) + gói tin thực tế #17/#118:
+  // 1) extension_kind = 235 (type.googleapis.com/spotify.traits.v1.MixabilityTrait, 59B):
+  //    0a 35 "type.googleapis.com/spotify.traits.v1.MixabilityTrait" + 12 02 08 01
+  // 2) extension_kind = 170 (type.googleapis.com/spotify.autolensextension.v1.AutoLens, 66B, client-feature-id: list-mixing-sorting-plugin):
+  //    0a 39 "type.googleapis.com/spotify.autolensextension.v1.AutoLens" + 12 05 0a 03 "mix"
+  // 3) extension_kind = 225 (client-feature-id: your_library -> 0a 02 08 01)
   const MIXABILITY_TRAIT_ANY = serialize([
     fieldString(1, "type.googleapis.com/spotify.traits.v1.MixabilityTrait"),
     fieldBytes(2, serialize([fieldVarint(1, 1)]))
+  ]);
+  const AUTOLENS_MIX_ANY = serialize([
+    fieldString(1, "type.googleapis.com/spotify.autolensextension.v1.AutoLens"),
+    fieldBytes(2, serialize([fieldString(1, "mix")]))
   ]);
 
   function patchExtendedMetadata(b) {
@@ -2309,7 +2312,10 @@
       const arr = parse(f.p);
       if (!arr || !arr.length) continue;
       const kindField = first(arr, 2);
-      if (!kindField || kindField.w !== 0 || kindField.v !== 235) continue;
+      if (!kindField || kindField.w !== 0) continue;
+      const kind = kindField.v;
+      if (kind !== 235 && kind !== 170) continue;
+      const targetAny = kind === 170 ? AUTOLENS_MIX_ANY : MIXABILITY_TRAIT_ANY;
 
       // Đảm bảo header cấp mảng (f1) có status = 200
       const arrHdr = first(arr, 1);
@@ -2330,8 +2336,11 @@
         if (ef.no !== 3 || ef.w !== 2 || !ef.p || !ef.p.length) continue;
         const ent = parse(ef.p);
         if (!ent || !ent.length) continue;
+        const uriField = first(ent, 2);
+        const uriStr = uriField && uriField.w === 2 ? text(uriField) : "";
+        if (uriStr && !/^spotify:playlist:/i.test(uriStr)) continue;
 
-        // 1) Sửa status trong ExtensionHeader (f1.f1) về 200 (08 c8 01) nếu đang là 404/403/336 (08 b0 02)
+        // 1) Sửa status trong ExtensionHeader (f1.f1) về 200 (08 c8 01) nếu đang là 404/403/336/304 (08 b0 02)
         let entHdr = first(ent, 1);
         if (entHdr && entHdr.w === 2 && entHdr.p) {
           const eh = parse(entHdr.p);
@@ -2352,15 +2361,15 @@
           arrChanged = true;
         }
 
-        // 2) Bơm hoặc ghi đè f3 = MIXABILITY_TRAIT_ANY (59B)
+        // 2) Bơm hoặc ghi đè f3 = targetAny (MixabilityTrait 59B hoặc AutoLens 66B)
         const extData = first(ent, 3);
         if (extData && extData.w === 2) {
-          if (!same(extData.p, MIXABILITY_TRAIT_ANY)) {
-            extData.p = MIXABILITY_TRAIT_ANY;
+          if (!same(extData.p, targetAny)) {
+            extData.p = targetAny;
             arrChanged = true;
           }
         } else if (!extData) {
-          ent.push(fieldBytes(3, MIXABILITY_TRAIT_ANY));
+          ent.push(fieldBytes(3, targetAny));
           arrChanged = true;
         }
 
@@ -2378,39 +2387,80 @@
     return changed ? serialize(fields) : null;
   }
 
-  // Bắt từ ảnh #0 & #15 (4YvPfs7WpoADAovoaFjRPQ/diff 405B) vs #22 (37i9dQZF1Fs6Dvo6yu9lo4/diff 348B):
-  // Playlist CÓ nút Phối có thêm 3 trường ở cấp gốc của SelectedListContent:
+  // Bắt từ gói tin thực tế #84, #125, #180 (4YvPfs7WpoADAovoaFjRPQ/diff & /signals):
+  // Playlist CÓ nút Phối có đủ 4 trường ở cấp gốc của SelectedListContent:
   //   f17 = 1 (varint)
-  //   f18 = { f1=1, f2=1, f3=1, f3=2, f3=3, f4=1, f5=1, f6=0 }
-  //   f22 = { f1={ f1="auto", f2="auto", f3=[0x08, 0xc8, 0x01] }, f1={ f1="autoplay", f2="df837dbe828a97bbc81428c112eb54d69927ef" } }
-  // Trong khi playlist KHÔNG có nút Phối (#22) trả f17=0, f18={f1=1,f2=0,f4=0,f5=1,f6=0} và thiếu f22!
-  const F18_MIX_CAPABILITIES = serialize([
-    fieldVarint(1, 1),
-    fieldVarint(2, 1),
-    fieldVarint(3, 1),
-    fieldVarint(3, 2),
-    fieldVarint(3, 3),
-    fieldVarint(4, 1),
-    fieldVarint(5, 1),
-    fieldVarint(6, 0)
+  //   f18 = 215B đầy đủ (f1..f23, đặc biệt f7..f13, f15..f23 quyết định hiển thị thanh công cụ Phối)
+  //   f22 = 112B gồm 4 lens descriptors: "auto", "autoplay", "mix" (c16a3e0f), "jam"
+  //   f23 = 1 (varint)
+  // Trong khi playlist KHÔNG có nút Phối (#181, #150) trả f17=0, f18=167B toàn 0, f22 chỉ có "auto", và f23=0!
+  const F18_MIX_CAPABILITIES = new Uint8Array([
+    0x08,0x01,0x10,0x01,0x18,0x01,0x18,0x02,0x18,0x03,0x20,0x01,0x28,0x01,0x30,0x00,
+    0x3a,0x0c,0x08,0x01,0x08,0x02,0x08,0x03,0x10,0x01,0x10,0x02,0x10,0x03,0x42,0x27,
+    0x0a,0x02,0x08,0x01,0x12,0x02,0x08,0x01,0x1a,0x02,0x08,0x01,0x22,0x02,0x08,0x01,
+    0x32,0x02,0x08,0x01,0x7a,0x02,0x08,0x01,0x92,0x01,0x02,0x08,0x01,0xaa,0x01,0x02,
+    0x08,0x01,0xb2,0x01,0x02,0x08,0x01,0x4a,0x06,0x08,0x03,0x12,0x02,0x08,0x01,0x4a,
+    0x06,0x08,0x04,0x12,0x02,0x08,0x01,0x4a,0x06,0x08,0x11,0x12,0x02,0x08,0x01,0x4a,
+    0x06,0x08,0x13,0x12,0x02,0x08,0x01,0x4a,0x06,0x08,0x14,0x12,0x02,0x08,0x01,0x4a,
+    0x06,0x08,0x1e,0x12,0x02,0x08,0x01,0x4a,0x06,0x08,0x24,0x12,0x02,0x08,0x01,0x4a,
+    0x06,0x08,0x25,0x12,0x02,0x08,0x01,0x50,0x01,0x62,0x18,0x0a,0x06,0x08,0x01,0x10,
+    0x01,0x18,0x01,0x12,0x06,0x08,0x01,0x10,0x01,0x18,0x01,0x32,0x06,0x08,0x01,0x10,
+    0x01,0x18,0x01,0x68,0x01,0x70,0x00,0x78,0x01,0x82,0x01,0x16,0x0a,0x0a,0x08,0x01,
+    0x10,0x01,0x18,0x01,0x20,0x01,0x28,0x00,0x12,0x08,0x08,0x01,0x18,0x01,0x20,0x01,
+    0x28,0x01,0x88,0x01,0x01,0x90,0x01,0x01,0x98,0x01,0x01,0xa0,0x01,0x01,0xa8,0x01,
+    0x01,0xb0,0x01,0x01,0xb8,0x01,0x01
+  ]);
+  const F22_LENS_AUTO = serialize([
+    fieldString(1, "auto"),
+    fieldString(2, "auto"),
+    fieldBytes(3, new Uint8Array([0x08, 0xc8, 0x01]))
+  ]);
+  const F22_LENS_AUTOPLAY = serialize([
+    fieldString(1, "autoplay"),
+    fieldString(2, "df837dbe828a97bbc81428c112eb54d69927ef03"),
+    fieldBytes(3, new Uint8Array([0x08, 0xc8, 0x01]))
+  ]);
+  const F22_LENS_MIX = serialize([
+    fieldString(1, "mix"),
+    fieldString(2, "c16a3e0f"),
+    fieldBytes(3, new Uint8Array([0x08, 0xc8, 0x01]))
+  ]);
+  const F22_LENS_JAM = serialize([
+    fieldString(1, "jam"),
+    fieldBytes(3, new Uint8Array([0x08, 0xc8, 0x01]))
   ]);
   const F22_MIX_SIGNALS = serialize([
-    fieldBytes(
-      1,
-      serialize([
-        fieldString(1, "auto"),
-        fieldString(2, "auto"),
-        fieldBytes(3, new Uint8Array([0x08, 0xc8, 0x01]))
-      ])
-    ),
-    fieldBytes(
-      1,
-      serialize([
-        fieldString(1, "autoplay"),
-        fieldString(2, "df837dbe828a97bbc81428c112eb54d69927ef")
-      ])
-    )
+    fieldBytes(1, F22_LENS_AUTO),
+    fieldBytes(1, F22_LENS_AUTOPLAY),
+    fieldBytes(1, F22_LENS_MIX),
+    fieldBytes(1, F22_LENS_JAM)
   ]);
+
+  function patchF22Lenses(f22Payload) {
+    const sub = parse(f22Payload);
+    if (!sub || !sub.length) return F22_MIX_SIGNALS;
+    const seenLens = Object.create(null);
+    for (const lf of sub) {
+      if (lf.no !== 1 || lf.w !== 2 || !lf.p) continue;
+      const inner = parse(lf.p);
+      const name = inner ? text(first(inner, 1)) : null;
+      if (name) seenLens[name.toLowerCase()] = true;
+    }
+    let mod = false;
+    const required = [
+      ["auto", F22_LENS_AUTO],
+      ["autoplay", F22_LENS_AUTOPLAY],
+      ["mix", F22_LENS_MIX],
+      ["jam", F22_LENS_JAM]
+    ];
+    for (const req of required) {
+      if (!seenLens[req[0]]) {
+        sub.push(fieldBytes(1, req[1]));
+        mod = true;
+      }
+    }
+    return mod ? serialize(sub) : null;
+  }
 
   function patchPlaylistMix(b) {
     if (!PLAYLIST_MIX_ON || !b || !b.length) return null;
@@ -2434,19 +2484,18 @@
     if (f3 && f3.w === 2 && f3.p && f3.p.length) {
       attrFields = parse(f3.p);
       if (!attrFields) return null;
-      // Bỏ qua danh sách hệ thống như "recent-searches" (f11="recent-searches" ở ảnh #22)
+      // Bỏ qua danh sách hệ thống như "recent-searches", "recents", "listen-later"
       const f11 = first(attrFields, 11);
       const f11Text = f11 && f11.w === 2 ? text(f11) : null;
-      if (f11Text && /recent-searches/i.test(f11Text)) return null;
+      if (f11Text && /(?:recent-searches|recents|listen-later)/i.test(f11Text)) return null;
     }
 
     let changed = false;
     const isSignalsUrl = /\/signals(?:\?|$)/i.test(url);
 
-    // 1) Trên /playlist/v2/playlist/<id> và /diff (không phải /signals):
-    //    Nâng f17 = 1, f18 = F18_MIX_CAPABILITIES, và bơm f22 = F22_MIX_SIGNALS
-    //    để client vẽ nút [Phối] và tự động gọi /signals!
-    if (!isSignalsUrl) {
+    // 1) Trên mọi gói SelectedListContent (kể cả /playlist/v2/playlist/<id>, /diff và /signals):
+    //    Nâng f17 = 1, f18 = F18_MIX_CAPABILITIES (215B đầy đủ), f22 đủ 4 lens ("auto", "autoplay", "mix", "jam") và f23 = 1!
+    {
       const f17 = first(fields, 17);
       if (f17 && f17.w === 0) {
         if (f17.v !== 1) {
@@ -2472,6 +2521,23 @@
       const f22 = first(fields, 22);
       if (!f22) {
         fields.push(fieldBytes(22, F22_MIX_SIGNALS));
+        changed = true;
+      } else if (f22.w === 2 && f22.p) {
+        const newF22 = patchF22Lenses(f22.p);
+        if (newF22) {
+          f22.p = newF22;
+          changed = true;
+        }
+      }
+
+      const f23 = first(fields, 23);
+      if (f23 && f23.w === 0) {
+        if (f23.v !== 1) {
+          f23.v = 1;
+          changed = true;
+        }
+      } else if (!f23 && !/\/diff(?:\?|$)/i.test(url)) {
+        fields.push(fieldVarint(23, 1));
         changed = true;
       }
     }
