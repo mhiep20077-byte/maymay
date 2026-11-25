@@ -957,20 +957,33 @@
       }
       if (removed) continue;
 
-      // v2.6.2: Từ đối chiếu v3/configuration (100.475B Free vs 108.084B Premium):
-      // Trên Free có họ `ios-reinventfree-*` (như `ios-reinventfree-timecaupsellpage-impl`,
-      // `ios-reinventfree-controllerui-impl`). Gạt toàn bộ BoolValue của họ này
-      // và mọi cờ upsell/gate trong `ios-settings-mediaqualitypageplugin-impl` về false!
-      if (!matchedRule && adsOn && first(value, 3)) {
+      // v2.6.2 + v3.0: Từ đối chiếu v3/configuration (100.475B Free vs 108.084B Premium):
+      // 1) Gạt toàn bộ BoolValue của họ `ios-reinventfree-*` và mọi cờ upsell/gate/lock về false.
+      // 2) Tự động BẬT (BoolValue = true) mọi cờ có sẵn trong 100KB v3/configuration thuộc họ
+      //    mix / automix / transition / curation / smart_reorder / bpm / jam / sociallistening / blend
+      //    mà không cần đoán trước tên scope `ios-*-impl`!
+      if (!matchedRule && first(value, 3)) {
         const isReinventFree = /^ios-reinventfree-/i.test(scope) && !/^disable_/i.test(name);
         const isMediaQualityGate =
           /mediaquality|audioquality/i.test(scope) &&
           /(?:upsell|pigeon|gbb|lock|restrict|gate|free|badge)/i.test(name);
         const isGenericUpsell =
-          /(?:^|_)(?:upsell|free_user_.*upsell|time_cap_upsell)(?:_|$)/i.test(name) &&
-          !/^disable_/i.test(name);
-        if (isReinventFree || isMediaQualityGate || isGenericUpsell) {
+          /(?:upsell|free_user|time_cap|timecap|pigeon|gbb|paywall|premium_only|premium_gated.*upsell)/i.test(
+            scope + "." + name
+          ) && !/^disable_/i.test(name);
+        const isMixOrJamScope =
+          /(?:playlist[-_]?mix|automix|transition|curation|smart_?reorder|mixing|bpm|sociallistening|listeningparties|\bjam\b|\bmix\b)/i.test(
+            scope + "." + name
+          );
+        const isNegativeFlag =
+          /(?:^|_)(?:disable|disallow|restrict|lock|hide|block|kill|off|force_free|upsell|timecap|time_cap)(?:_|$)/i.test(
+            name
+          );
+
+        if (adsOn && (isReinventFree || isMediaQualityGate || isGenericUpsell)) {
           value = setValue(value, fieldBytes(3, boolValue(0)));
+        } else if (isMixOrJamScope) {
+          value = setValue(value, fieldBytes(3, boolValue(isNegativeFlag ? 0 : 1)));
         }
       }
 
@@ -2245,7 +2258,9 @@
     ["automix.mode", "auto"],
     ["mix", "true"],
     ["mix-type", "allow-custom"],
-    ["automix.queue", "true"]
+    ["automix.queue", "true"],
+    ["automix", "true"],
+    ["automix.can-toggle", "true"]
   ];
 
   function patchPlaylistMix(b) {
@@ -2254,13 +2269,26 @@
     const fields = parse(b);
     if (!fields || !fields.length) return null;
     const f1 = first(fields, 1);
-    const f3 = first(fields, 3);
+    const f2 = first(fields, 2);
+    // SelectedListContent (playlist / signals / diff) luôn có f1 = revision bytes (4..64B)
+    // và f2 = varint length (hoặc f3 = PlaylistAttributes / f5 = ListItems).
     if (!f1 || f1.w !== 2 || !f1.p || f1.p.length < 4 || f1.p.length > 64) return null;
-    if (!f3 || f3.w !== 2 || !f3.p || !f3.p.length) return null;
-    const attrFields = parse(f3.p);
-    if (!attrFields || !attrFields.length) return null;
-    const nameField = first(attrFields, 1);
-    if (!nameField || nameField.w !== 2) return null;
+    let f3 = first(fields, 3);
+    if (!f3 && (!f2 || f2.w !== 0)) return null;
+
+    let attrFields = [];
+    if (f3 && f3.w === 2 && f3.p && f3.p.length) {
+      const parsedAttr = parse(f3.p);
+      if (!parsedAttr) return null;
+      attrFields = parsedAttr;
+    } else if (!f3) {
+      f3 = fieldBytes(3, new Uint8Array(0));
+      // Chèn f3 ngay sau f2 (hoặc sau f1) để giữ đúng thứ tự protobuf SelectedListContent
+      const idx = fields.indexOf(f2 || f1);
+      fields.splice(idx + 1, 0, f3);
+    } else {
+      return null;
+    }
 
     let changed = false;
     const seen = Object.create(null);
@@ -2351,6 +2379,16 @@
   if (verbose) {
     const pth = url.replace(/^https?:\/\/[^/]+/, "").split("?")[0];
     console.log("spotify-vn-mix: patched " + pth.slice(0, 70) + " " + body.length + " -> " + out.length + "B");
+  }
+
+  if (flag(opt.notify, true) && (isPlaylist || isGetYourPremiumBadge || isGetPremiumPlanRow)) {
+    try {
+      if (typeof $notification !== "undefined" && $notification && typeof $notification.post === "function") {
+        const pth = url.replace(/^https?:\/\/[^/]+/, "").split("?")[0];
+        const label = isPlaylist ? "Nút Phối (f3.f12)" : isGetYourPremiumBadge ? "Badge ToCam" : "Hàng gói";
+        $notification.post("[Mix v3.0] " + label, body.length + "B → " + out.length + "B", pth.slice(-60));
+      }
+    } catch (e) {}
   }
 
   if ($response && $response._wasStringBody && out.length && (out[0] === 0x7b || out[0] === 0x5b)) {

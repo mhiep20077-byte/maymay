@@ -357,6 +357,12 @@
     } catch (e) {}
   } else if (kind !== "gzip") {
     var treeStr = group === "NUT PHOI" ? decodeProtoTree(core, 0, 16) : null;
+    if (treeStr && /(?:\/signals|\/diff|\/playlist)/i.test(shortPath)) {
+      var f12Matches = treeStr.match(/f12=\{[^}]+\}/g);
+      if (f12Matches && f12Matches.length) {
+        treeStr = f12Matches.join(" ") + " | " + treeStr;
+      }
+    }
     var asciiHits = [];
     var hotWords = [];
     var otherWords = [];
@@ -365,7 +371,7 @@
     var GENERAL_HOT_RE =
       /(?:free|premium|very_?high|high|normal|low|320|160|96|vorbis|ogg|flac|bitrate|quality|offline|download|badge|plan|535353|b3b3b3|1ed760|spotify|tocam|individual)/i;
     var cur = "";
-    var scanLimit = Math.min(core.length, 65536);
+    var scanLimit = Math.min(core.length, 131072);
     for (var bi = 0; bi < scanLimit; bi++) {
       var ch = core[bi];
       if (ch >= 0x20 && ch < 0x7f) {
