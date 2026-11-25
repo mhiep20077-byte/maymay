@@ -2503,11 +2503,18 @@
     console.log("spotify-vn-mix: patched " + pth.slice(0, 70) + " " + body.length + " -> " + out.length + "B");
   }
 
-  if (flag(opt.notify, true) && (isPlaylist || isGetYourPremiumBadge || isGetPremiumPlanRow)) {
+  const isConfigOrAttr = /(?:v3\/configuration|configuration\/attributes|user-customization-service|bootstrap)/i.test(url);
+  if (flag(opt.notify, true) && (isPlaylist || isGetYourPremiumBadge || isGetPremiumPlanRow || isConfigOrAttr)) {
     try {
       if (typeof $notification !== "undefined" && $notification && typeof $notification.post === "function") {
         const pth = url.replace(/^https?:\/\/[^/]+/, "").split("?")[0];
-        const label = isPlaylist ? "Nút Phối (f3.f12)" : isGetYourPremiumBadge ? "Badge ToCam" : "Hàng gói";
+        const label = isPlaylist
+          ? "Nút Phối (f17/f18/f22)"
+          : isConfigOrAttr
+          ? "Cấu hình Phối (Config/Attr)"
+          : isGetYourPremiumBadge
+          ? "Badge ToCam"
+          : "Hàng gói";
         $notification.post("[Mix v3.0] " + label, body.length + "B → " + out.length + "B", pth.slice(-60));
       }
     } catch (e) {}

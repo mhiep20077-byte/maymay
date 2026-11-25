@@ -396,48 +396,156 @@
     }
 
     if (group === "PHOI-CFG") {
-      // Voi configuration/attributes (7388B) va v3/configuration (108084B):
-      // Ban nhieu banner lien tiep (moi banner ~210 ky tu) de hien TRON VEN 100%
-      // danh sach co Spotify.Feature.* (tu A..Z, khong bi cat o chu L) va cac co mix/transition/curation!
-      var allCfgTokens = [];
-      var curTok = "";
-      for (var ci = 0; ci < core.length; ci++) {
-        var cch = core[ci];
-        if (cch >= 0x20 && cch < 0x7f) {
-          curTok += String.fromCharCode(cch);
-          if (curTok.length > 80) curTok = curTok.slice(0, 80);
-        } else {
-          if (curTok.length >= 3) {
-            if (/configuration\/attributes/i.test(shortPath)) {
-              if (/^Spotify\.Feature\./.test(curTok)) {
-                // Lay them 4 byte hex ngay sau ten feature de biet gia tri enum/bool
-                var tailHex = toHex(core.subarray(ci, Math.min(core.length, ci + 6)), 6);
-                allCfgTokens.push(curTok.replace(/^Spotify\.Feature\./, "SF.") + "=" + tailHex);
-              } else if (PHOI_HOT_RE.test(curTok)) {
-                allCfgTokens.push(curTok);
-              }
-            } else if (PHOI_HOT_RE.test(curTok)) {
-              var tailH = toHex(core.subarray(ci, Math.min(core.length, ci + 6)), 6);
-              var item = curTok + ":" + tailH;
-              if (allCfgTokens.indexOf(item) < 0) allCfgTokens.push(item);
-            }
+      // Giai ma truc tiep protobuf cua configuration/attributes (7388B) va v3/configuration (108162B)
+      // de lay TRON VEN 100% ten scope/name=value (khong bi cat 4 chu cai dau nhu tailHex)!
+      function parseProtoSimple(buf) {
+        var out = [];
+        var st = { i: 0 };
+        while (st.i < buf.length) {
+          var k = readVarint(buf, st);
+          if (k <= 0) return null;
+          var no = Math.floor(k / 8);
+          var w = k % 8;
+          if (no <= 0 || no > 536870911) return null;
+          if (w === 0) {
+            var v = readVarint(buf, st);
+            if (v < 0) return null;
+            out.push({ no: no, w: 0, v: v });
+          } else if (w === 2) {
+            var l = readVarint(buf, st);
+            if (l < 0 || l > buf.length - st.i) return null;
+            out.push({ no: no, w: 2, p: buf.subarray(st.i, st.i + l) });
+            st.i += l;
+          } else if (w === 1 || w === 5) {
+            var sz = w === 1 ? 8 : 4;
+            if (st.i + sz > buf.length) return null;
+            out.push({ no: no, w: w, p: buf.subarray(st.i, st.i + sz) });
+            st.i += sz;
+          } else {
+            return null;
           }
-          curTok = "";
         }
+        return out;
       }
+
+      function firstField(arr, no) {
+        if (!arr) return null;
+        for (var i = 0; i < arr.length; i++) if (arr[i].no === no) return arr[i];
+        return null;
+      }
+
+      function asStr(f) {
+        if (!f || f.w !== 2 || !f.p) return null;
+        if (!isAsciiPrintable(f.p)) return null;
+        return decodeUtf8(f.p, 120);
+      }
+
+      var allCfgTokens = [];
+      var CFG_SCOPE_RE =
+        /(?:playlistcuration|sessioncontrol|playlistux|automix|mix|transition|curation|reorder|blendentity|sociallistening|jam|autolens|lens|casita)/i;
+
+      if (/configuration\/attributes/i.test(shortPath)) {
+        // Quet cay protobuf cua configuration/attributes
+        function walkAttrProto(buf, depth) {
+          if (depth > 3 || !buf || !buf.length) return;
+          var fds = parseProtoSimple(buf);
+          if (!fds) return;
+          for (var i = 0; i < fds.length; i++) {
+            var f = fds[i];
+            if (f.w !== 2 || !f.p || !f.p.length) continue;
+            var inner = parseProtoSimple(f.p);
+            if (!inner) continue;
+            var kf = firstField(inner, 1);
+            var vf = firstField(inner, 2);
+            var ks = asStr(kf);
+            if (ks && vf && vf.w === 2 && vf.p) {
+              if (/^Spotify\.Feature\.(?:MixingTools|JamEntryPoint|Bluejay|Kallax|UcpPromptable)/i.test(ks)) {
+                var vInner = parseProtoSimple(vf.p);
+                var s4 = vInner ? asStr(firstField(vInner, 4)) : null;
+                allCfgTokens.push(ks.replace(/^Spotify\.Feature\./, "SF.") + "=" + (s4 || toHex(vf.p, 32)));
+                continue;
+              }
+              if (
+                /(?:mix|jam|blend|social|transition|automix|curation|jogwheel|license|catalogue|type|ondemand)/i.test(
+                  ks
+                )
+              ) {
+                var vIn = parseProtoSimple(vf.p);
+                var desc = toHex(vf.p, 16);
+                if (vIn && vIn.length) {
+                  var vp = [];
+                  for (var vi = 0; vi < vIn.length; vi++) {
+                    var vfItem = vIn[vi];
+                    if (vfItem.w === 0) vp.push("f" + vfItem.no + "=" + vfItem.v);
+                    else if (vfItem.w === 2) vp.push("f" + vfItem.no + '="' + (asStr(vfItem) || toHex(vfItem.p, 16)) + '"');
+                  }
+                  if (vp.length) desc = vp.join(",");
+                }
+                allCfgTokens.push(ks + ":{" + desc + "}");
+                continue;
+              }
+            }
+            walkAttrProto(f.p, depth + 1);
+          }
+        }
+        walkAttrProto(core, 0);
+      } else {
+        // Quet cay protobuf cua v3/configuration (AssignedValue: f1={f1=scope, f2=name}, f3=bool, f4=int, f5=enum)
+        function walkCfgProto(buf, depth) {
+          if (depth > 3 || !buf || !buf.length) return;
+          var fds = parseProtoSimple(buf);
+          if (!fds) return;
+          for (var i = 0; i < fds.length; i++) {
+            var f = fds[i];
+            if (f.w !== 2 || !f.p || !f.p.length) continue;
+            var valMsg = parseProtoSimple(f.p);
+            if (!valMsg) continue;
+            var idField = firstField(valMsg, 1);
+            var idParts = idField && idField.w === 2 ? parseProtoSimple(idField.p) : null;
+            var sc = idParts ? asStr(firstField(idParts, 1)) : null;
+            var nm = idParts ? asStr(firstField(idParts, 2)) : null;
+            if (sc !== null && nm !== null && nm.length > 0) {
+              if (CFG_SCOPE_RE.test(sc) || CFG_SCOPE_RE.test(nm)) {
+                var f3b = firstField(valMsg, 3);
+                var f4i = firstField(valMsg, 4);
+                var f5e = firstField(valMsg, 5);
+                var vStr = "?";
+                if (f3b && f3b.w === 2) {
+                  var bIn = parseProtoSimple(f3b.p);
+                  var bv = bIn ? firstField(bIn, 1) : null;
+                  vStr = bv && bv.w === 0 && bv.v === 1 ? "true" : "false";
+                } else if (f4i && f4i.w === 2) {
+                  var iIn = parseProtoSimple(f4i.p);
+                  var iv = iIn ? firstField(iIn, 1) : null;
+                  vStr = iv && iv.w === 0 ? String(iv.v) : "0";
+                } else if (f5e && f5e.w === 2) {
+                  var eIn = parseProtoSimple(f5e.p);
+                  var ev = eIn ? asStr(firstField(eIn, 1)) : null;
+                  vStr = '"' + (ev || "") + '"';
+                }
+                allCfgTokens.push(sc + "/" + nm + "=" + vStr);
+              }
+              continue;
+            }
+            walkCfgProto(f.p, depth + 1);
+          }
+        }
+        walkCfgProto(core, 0);
+      }
+
       if (allCfgTokens.length) {
         var chunkList = [];
         var curChunk = "";
-        for (var ti = 0; ti < allCfgTokens.length && chunkList.length < 8; ti++) {
-          var nextStr = curChunk ? curChunk + " · " + allCfgTokens[ti] : allCfgTokens[ti];
-          if (nextStr.length > 210) {
+        for (var ti = 0; ti < allCfgTokens.length && chunkList.length < 12; ti++) {
+          var nextStr = curChunk ? curChunk + "\n" + allCfgTokens[ti] : allCfgTokens[ti];
+          if (nextStr.length > 220) {
             chunkList.push(curChunk);
             curChunk = allCfgTokens[ti];
           } else {
             curChunk = nextStr;
           }
         }
-        if (curChunk && chunkList.length < 8) chunkList.push(curChunk);
+        if (curChunk && chunkList.length < 12) chunkList.push(curChunk);
         for (var bi2 = 0; bi2 < chunkList.length; bi2++) {
           postNotify(
             "[PHOI-CFG " + (bi2 + 1) + "/" + chunkList.length + "] " + ep,
