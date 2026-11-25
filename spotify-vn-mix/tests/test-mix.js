@@ -164,8 +164,8 @@ test("v1/capabilities: audio_quality='VERY_HIGH' và effective_license='premium'
   assert.strictEqual(parsed.can_play_on_demand, true);
 });
 
-// 6. SelectedListContent (/playlist-v2/v2/playlist/<id>/signals & /diff): bơm 5 cờ f12 của Nút Phối
-test("SelectedListContent (/signals & /diff): ghi đè mix='false' -> 'true' và bơm đủ 5 cờ f12 (can-view-transition, automix.mode, mix, mix-type, automix.queue)", () => {
+// 6. SelectedListContent (/playlist-v2/v2/playlist/<id>/signals & /diff): bơm quyền can-view-transition & mix-type, không phá permission/base 11B và không khoá cứng khi user tắt mix=false (trừ khi force_mix_on=true)
+test("SelectedListContent (/signals & /diff): bơm can-view-transition='true', mix-type='allow-custom', bỏ qua permission/base 11B, và hỗ trợ force_mix_on", () => {
   const rev24 = Buffer.from("0000000094eab401d0000000000000000000000000000000", "hex");
   const trackSignal88 = Buffer.from("0a1c3331746a6b7631323334353637383930", "hex");
   const signalsOff = cat(
@@ -181,17 +181,25 @@ test("SelectedListContent (/signals & /diff): ghi đè mix='false' -> 'true' và
       fBytes(3, cat(fStr(1, "spotify:track:15PnF9NOMz9Sdy17LVMlg9"), fBytes(2, trackSignal88)))
     ))
   );
-  const res = runResponseScript(
-    "https://spclient.wg.spotify.com/playlist-v2/v2/playlist/4YvPfs7WpoADAovoaFjRPQ/signals",
+  // Mặc định: bơm can-view-transition + mix-type, nhưng giữ mix=false để không bị kẹt nút Phối trên Acc Premium
+  const resDefault = runResponseScript(
+    "https://spclient.wg.spotify.com/playlist/v2/playlist/4YvPfs7WpoADAovoaFjRPQ/signals",
     signalsOff
   );
-  assert(res && res.body, "Phải trả về body đã patch f3.f12");
-  const b = Buffer.from(res.body);
-  assert(!b.includes(Buffer.from("false", "utf8")), "Không được còn mix=false");
-  for (const expected of ["can-view-transition", "automix.mode", "auto", "allow-custom", "automix.queue", "Hiệp"]) {
-    assert(b.includes(Buffer.from(expected, "utf8")), "Phải chứa " + expected);
+  assert(resDefault && resDefault.body, "Phải trả về body đã bơm can-view-transition và mix-type");
+  const bDef = Buffer.from(resDefault.body);
+  for (const expected of ["can-view-transition", "allow-custom", "Hiệp"]) {
+    assert(bDef.includes(Buffer.from(expected, "utf8")), "Phải chứa " + expected);
   }
-  assert(b.includes(trackSignal88), "Phải giữ nguyên 100% byte signal của từng bài trong f5");
+  assert(bDef.includes(trackSignal88), "Phải giữ nguyên 100% byte signal của từng bài trong f5");
+
+  // Không được đụng vào /playlist-permission/v1/playlist/<id>/permission/base (11B)
+  const perm11B = Buffer.from("0a050801100118011002", "hex");
+  const resPerm = runResponseScript(
+    "https://spclient.wg.spotify.com/playlist-permission/v1/playlist/7ejDn9p23d5bQEgtQMxzla/permission/base",
+    perm11B
+  );
+  assert(!resPerm || !resPerm.body, "Tuyệt đối không được sửa gói permission/base 11B");
 });
 
 console.log("\n--------------------------------------------------------------");

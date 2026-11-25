@@ -396,8 +396,59 @@
     }
 
     if (group === "PHOI-CFG") {
-      if (hotWords.length) summaryParts.push("Co Phoi: " + hotWords.slice(0, 8).join(" | "));
-      else summaryParts.push("Khong thay co jam/mix trong " + len + "B");
+      // Voi configuration/attributes (7388B) va v3/configuration (108084B):
+      // Ban nhieu banner lien tiep (moi banner ~210 ky tu) de hien TRON VEN 100%
+      // danh sach co Spotify.Feature.* (tu A..Z, khong bi cat o chu L) va cac co mix/transition/curation!
+      var allCfgTokens = [];
+      var curTok = "";
+      for (var ci = 0; ci < core.length; ci++) {
+        var cch = core[ci];
+        if (cch >= 0x20 && cch < 0x7f) {
+          curTok += String.fromCharCode(cch);
+          if (curTok.length > 80) curTok = curTok.slice(0, 80);
+        } else {
+          if (curTok.length >= 3) {
+            if (/configuration\/attributes/i.test(shortPath)) {
+              if (/^Spotify\.Feature\./.test(curTok)) {
+                // Lay them 4 byte hex ngay sau ten feature de biet gia tri enum/bool
+                var tailHex = toHex(core.subarray(ci, Math.min(core.length, ci + 6)), 6);
+                allCfgTokens.push(curTok.replace(/^Spotify\.Feature\./, "SF.") + "=" + tailHex);
+              } else if (PHOI_HOT_RE.test(curTok)) {
+                allCfgTokens.push(curTok);
+              }
+            } else if (PHOI_HOT_RE.test(curTok)) {
+              var tailH = toHex(core.subarray(ci, Math.min(core.length, ci + 6)), 6);
+              var item = curTok + ":" + tailH;
+              if (allCfgTokens.indexOf(item) < 0) allCfgTokens.push(item);
+            }
+          }
+          curTok = "";
+        }
+      }
+      if (allCfgTokens.length) {
+        var chunkList = [];
+        var curChunk = "";
+        for (var ti = 0; ti < allCfgTokens.length && chunkList.length < 8; ti++) {
+          var nextStr = curChunk ? curChunk + " · " + allCfgTokens[ti] : allCfgTokens[ti];
+          if (nextStr.length > 210) {
+            chunkList.push(curChunk);
+            curChunk = allCfgTokens[ti];
+          } else {
+            curChunk = nextStr;
+          }
+        }
+        if (curChunk && chunkList.length < 8) chunkList.push(curChunk);
+        for (var bi2 = 0; bi2 < chunkList.length; bi2++) {
+          postNotify(
+            "[PHOI-CFG " + (bi2 + 1) + "/" + chunkList.length + "] " + ep,
+            "HTTP " + status + " · " + len + "B",
+            chunkList[bi2]
+          );
+        }
+        $done({});
+        return;
+      }
+      summaryParts.push("Khong thay co jam/mix trong " + len + "B");
     } else {
       if (treeStr) summaryParts.push(treeStr);
       if (hotWords.length) summaryParts.push(hotWords.slice(0, 6).join("|"));

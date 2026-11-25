@@ -2253,26 +2253,36 @@
   // Khi nút Phối TẮT hoặc bị server khoá (#42, #43, #10):
   //   f12 = { f1: "mix", f2: "false" } (hoặc thiếu 5 cặp f12 trên).
   const PLAYLIST_MIX_ON = flag(opt.playlist_mix, true);
+  // Lưu ý từ thực nghiệm Ảnh 1..5:
+  // - Trên /signals, nếu ép cứng mix="false" -> "true" thì trên Acc Premium nút Phối
+  //   bị DÍNH CỨNG ở trạng thái BẬT (không tắt được, lặp 21111B -> 21270B).
+  // - Nếu opt.force_mix_on = true thì mới ép mix="true"; mặc định chỉ bơm quyền
+  //   can-view-transition="true" và mix-type="allow-custom" khi chưa có, tôn trọng
+  //   lệnh tắt mix="false" của người dùng.
+  const FORCE_MIX_ON = flag(opt.force_mix_on, false);
   const PLAYLIST_MIX_ATTRS = [
+    ["can-view-transition", "true"],
+    ["mix-type", "allow-custom"]
+  ];
+  const PLAYLIST_MIX_ACTIVE_ATTRS = [
     ["can-view-transition", "true"],
     ["automix.mode", "auto"],
     ["mix", "true"],
     ["mix-type", "allow-custom"],
-    ["automix.queue", "true"],
-    ["automix", "true"],
-    ["automix.can-toggle", "true"]
+    ["automix.queue", "true"]
   ];
 
   function patchPlaylistMix(b) {
     if (!PLAYLIST_MIX_ON || !b || !b.length) return null;
     if (b[0] === 0x7b || b[0] === 0x5b) return null;
+    // Tuyệt đối không đụng /playlist-permission/.../permission/base (11B)
+    if (/permission/i.test(url) || b.length < 32) return null;
     const fields = parse(b);
     if (!fields || !fields.length) return null;
     const f1 = first(fields, 1);
     const f2 = first(fields, 2);
-    // SelectedListContent (playlist / signals / diff) luôn có f1 = revision bytes (4..64B)
-    // và f2 = varint length (hoặc f3 = PlaylistAttributes / f5 = ListItems).
-    if (!f1 || f1.w !== 2 || !f1.p || f1.p.length < 4 || f1.p.length > 64) return null;
+    // SelectedListContent (playlist / signals / diff) luôn có f1 = revision bytes (16..32B)
+    if (!f1 || f1.w !== 2 || !f1.p || f1.p.length < 16 || f1.p.length > 40) return null;
     let f3 = first(fields, 3);
     if (!f3 && (!f2 || f2.w !== 0)) return null;
 
@@ -2283,12 +2293,27 @@
       attrFields = parsedAttr;
     } else if (!f3) {
       f3 = fieldBytes(3, new Uint8Array(0));
-      // Chèn f3 ngay sau f2 (hoặc sau f1) để giữ đúng thứ tự protobuf SelectedListContent
       const idx = fields.indexOf(f2 || f1);
       fields.splice(idx + 1, 0, f3);
     } else {
       return null;
     }
+
+    // Kiểm tra xem server có đang trả mix="false" (người dùng vừa bấm tắt Phối) không
+    let serverExplicitMixFalse = false;
+    for (const af of attrFields) {
+      if (af.no !== 12 || af.w !== 2 || !af.p || !af.p.length) continue;
+      const kv = parse(af.p);
+      if (!kv) continue;
+      const k = text(first(kv, 1));
+      const v = text(first(kv, 2));
+      if (k && k.toLowerCase() === "mix" && v && v.toLowerCase() === "false") {
+        serverExplicitMixFalse = true;
+      }
+    }
+
+    const targetList = FORCE_MIX_ON || !serverExplicitMixFalse ? PLAYLIST_MIX_ATTRS : PLAYLIST_MIX_ATTRS;
+    const applyList = FORCE_MIX_ON ? PLAYLIST_MIX_ACTIVE_ATTRS : targetList;
 
     let changed = false;
     const seen = Object.create(null);
@@ -2302,7 +2327,7 @@
       const ks = kf && kf.w === 2 ? text(kf) : null;
       const vs = vf && vf.w === 2 ? text(vf) : null;
       if (!ks) continue;
-      for (const pair of PLAYLIST_MIX_ATTRS) {
+      for (const pair of applyList) {
         if (ks.toLowerCase() === pair[0]) {
           seen[pair[0]] = true;
           if (vs !== pair[1]) {
@@ -2314,7 +2339,7 @@
       }
     }
 
-    for (const pair of PLAYLIST_MIX_ATTRS) {
+    for (const pair of applyList) {
       if (!seen[pair[0]]) {
         attrFields.push(fieldBytes(12, serialize([fieldString(1, pair[0]), fieldString(2, pair[1])])));
         changed = true;
@@ -2334,7 +2359,9 @@
   const isFortune = /net-fortune/i.test(url);
   const isJam = /(?:jam_status|connect-group|social-connect|sessions\/current|refresh-group-data)/i.test(url);
   const isCaps = /(?:device-capabilities|capabilities|audio-quality)/i.test(url);
-  const isPlaylist = /(?:\/playlist-v2\/|\/playlist\/|\/signals(?:\?|$)|\/diff(?:\?|$))/i.test(url);
+  const isPlaylist =
+    !/permission/i.test(url) &&
+    /(?:\/playlist-v2\/|\/playlist\/v2\/|\/signals(?:\?|$)|\/diff(?:\?|$))/i.test(url);
 
   function patchOne(b) {
     if (isBadgeDevice) return null;
