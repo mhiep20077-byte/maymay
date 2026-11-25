@@ -1,0 +1,38 @@
+#!name=Spotify VN Premium v2.6 (Badge + VeryHigh Fix)
+#!desc=Ban v2.6 doc lap (KHONG dung den ban v2.5 chinh). Giu nguyen chan quang cao + skip vo han + tua nhac cua v2.5; SUA 2 LOI: (1) GetYourPremiumBadge hien xam & chu Spotify Premium -> doi sang nen xanh #1ED760 + chu ToCam, (2) Mo khoa trang Chat luong Rat cao (sua loi grpc-accept-encoding lam nen frame 0x01, sua setQualityPairs de hong submessage playback-settings, them offline/high-bitrate vao AccountAttributes).
+#!category=Spotify
+#!author=Script goc: xzavier-amico / lyc-000001 · v2.6 fix: c4 / Zaka
+#!homepage=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-v26
+#!icon=https://raw.githubusercontent.com/luestr/IconResource/main/App_icon/120px/Spotify.png
+
+[Rule]
+# --- 1. Chan domain quang cao (giu nguyen 100% nhu v2.5 dang chay ngon) ---
+DOMAIN-SUFFIX,ads.spotify.com,REJECT
+DOMAIN-SUFFIX,adeventtracker.spotify.com,REJECT
+DOMAIN-SUFFIX,aet.spotify.com,REJECT
+DOMAIN-SUFFIX,pubads.g.doubleclick.net,REJECT
+DOMAIN-SUFFIX,securepubads.g.doubleclick.net,REJECT
+DOMAIN-SUFFIX,googleads.g.doubleclick.net,REJECT
+DOMAIN-SUFFIX,pagead2.googlesyndication.com,REJECT
+DOMAIN-SUFFIX,tpc.googlesyndication.com,REJECT
+DOMAIN-SUFFIX,adservice.google.com,REJECT
+DOMAIN-SUFFIX,www.googletagservices.com,REJECT
+
+# --- 2. Chan endpoint quang cao nam CHUNG host voi API (KHONG chan net-fortune) ---
+URL-REGEX,^https?://[^/]*spotify\.com/(?:ads/v3|ad-logic|sponsoredplaylist|premium-marketing),REJECT
+
+# --- 3. Chan QUIC/UDP cua Spotify de bat buoc di qua MITM HTTPS ---
+AND,((DOMAIN-SUFFIX,spotify.com),(PROTOCOL,UDP)),REJECT
+
+[MITM]
+hostname = %APPEND% *.spotify.com, spotify.com
+
+[Script]
+# --- 4. Buoc REQUEST: ep cap am thanh trong URL (0/1 -> 2 cho ca interactive va interactive_prefetch) ---
+SpotifyVN26 AudioLevel = type=http-request,pattern=^https:\/\/(?:[a-z0-9-]+\.)*spotify\.com(?::443)?\/storage-resolve\/v2\/files\/audio\/(?:interactive|interactive_prefetch)\/,script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-v26/scripts/spotify-audio-level.js,timeout=10
+
+# --- 5. Buoc REQUEST: xoa If-None-Match + ep identity cho ca REST va gRPC (chong 304 va frame nen 0x01) ---
+SpotifyVN26 Request = type=http-request,pattern=^https:\/\/(?:[a-z0-9-]+\.)*spotify\.com(?::443)?\/(?:bootstrap|user-customization-service|nebula|remote-config-resolver|product-state|product_state|product\/|user-profile|user_profile|profile|account|device-capabilities|login5|subscription|attributes|catalogue|premium|checkout|payment|v3\/login|me(?:\/|\?|$)|pam-view-service|pam-account|playback-settings|spotify\.clientrestrictions|clientrestrictions|GetRestrictedIntegrations|net-fortune|jam_status|connect-group|ondemand-selector|audio-attributes|media-quality|quality|settings|referrals),script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-v26/scripts/spotify-request.js,timeout=15
+
+# --- 6. Buoc RESPONSE: sua payload protobuf / gRPC / JSON ---
+SpotifyVN26 Response = type=http-response,pattern=^https:\/\/(?:[a-z0-9-]+\.)*spotify\.com(?::443)?\/(?:bootstrap|user-customization-service|nebula|remote-config-resolver|product-state|product_state|product\/|user-profile|user_profile|profile|account|device-capabilities|login5|subscription|attributes|catalogue|premium|checkout|payment|v3\/login|me(?:\/|\?|$)|pam-view-service|pam-account|playback-settings|spotify\.clientrestrictions|clientrestrictions|GetRestrictedIntegrations|net-fortune|jam_status|connect-group|ondemand-selector|audio-attributes|media-quality|quality|settings|referrals),script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-v26/scripts/spotify-premium.js,requires-body=true,binary-body-mode=true,max-size=1048576,timeout=30

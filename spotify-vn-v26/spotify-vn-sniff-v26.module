@@ -1,0 +1,13 @@
+#!name=Spotify VN Sniff v2.6 (Bat goi day du body + hex)
+#!desc=Module bat goi tin SACH v2.6: da them binary-body-mode=true va spotify-request.js de chong 304 / gzip / cat byte 0x80 (khong con bi Body rong 200). In ca chuoi ASCII va ma hex cua protobuf.
+#!category=Spotify
+#!author=c4 / ToCam
+#!homepage=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-v26
+
+[MITM]
+hostname = %APPEND% *.spotify.com, spotify.com
+
+[Script]
+SpotVN26_Clean_Req = type=http-request,pattern=^https://[^/]*spotify\.com(:443)?/(?:bootstrap|user-customization-service|nebula|remote-config-resolver|product-state|product_state|product/|user-profile|user_profile|profile|account|device-capabilities|login5|subscription|attributes|catalogue|premium|checkout|payment|v3/login|me(?:/|\?|$)|pam-view-service|pam-account|playback-settings|spotify\.clientrestrictions|clientrestrictions|GetRestrictedIntegrations|net-fortune|jam_status|connect-group|ondemand-selector|audio-attributes|media-quality|quality|settings|referrals),script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-v26/scripts/spotify-request.js,timeout=15
+SpotVN26_Sniff_Req = type=http-request,pattern=^https://[^/]*spotify\.com(:443)?/.*(storage-resolve|net-fortune),script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-v26/scripts/sniff-clean.js,timeout=10
+SpotVN26_Sniff_Res = type=http-response,pattern=^https://[^/]*spotify\.com(:443)?/.*(storage-resolve|net-fortune|device-capabilities|playback|audio|quality|bitrate|ondemand|bootstrap|ucs|resolve|nebula|product|profile|attributes|subscription|catalogue|premium|identity|login5|pam|plan|tier|entitlement|capability|capabilities|restriction|badge|account|checkout|payment|ViewService|Settings|Quality|Plan|Profile|Premium|referrals),script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-v26/scripts/sniff-clean.js,requires-body=true,binary-body-mode=true,max-size=524288,timeout=20
