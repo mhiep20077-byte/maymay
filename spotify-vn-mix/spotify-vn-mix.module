@@ -1,12 +1,10 @@
-#!name=Spotify VN Mix (Playlist Mix / Automix UI + ToCam Badge)
-#!desc=Ban thu nghiem nut Phoi nhac (Mix Tools / DJ) doc lap (KHONG dung v2.5 / v2.6). (1) Bat co mixing-tools, TransitionRowInteractionVariant, PlaylistMixing, smart_reorder trong remote config & customize. (2) Go restriction GetRestrictedIntegrations de mo nut Phoi. (3) Dat audio_level=0 (passthrough) de khong bi skip bai. (4) Giu nguyen badge xanh ToCam va chan ads.
+#!name=Spotify VN Mix v3.0 (Nut Phoi Jam + Playlist Mix + ToCam Badge)
+#!desc=Hop nhat v3.0 (mo lop Jam / Phoi: social-connect, sessions/current, connect-group, device-proxy, clientrestrictions, đục sâu 2 lớp protobuf + 13 cờ sociallistening + phanh tự lùi chống nhảy bài) + v2.8 Playlist Mix (TransitionRowInteractionVariant=EDIT, mixing-tools) + v2.6.2 (badge 23B ToCam #1ED760, thẻ gói 116B đầy đủ).
 #!category=Spotify
-#!author=Script goc: xzavier-amico / lyc-000001 · phoi nhac & fix: c4
+#!author=Script goc: xzavier-amico / lyc-000001 · fix & merge: Zaka + c4
 #!homepage=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-mix/spotify-vn-mix.module
-#!icon=https://raw.githubusercontent.com/luestr/IconResource/main/App_icon/120px/Spotify.png
 
 [Rule]
-# --- 1. Chan domain quang cao (giu nguyen 100% nhu v2.5 dang chay ngon) ---
 DOMAIN-SUFFIX,ads.spotify.com,REJECT
 DOMAIN-SUFFIX,adeventtracker.spotify.com,REJECT
 DOMAIN-SUFFIX,aet.spotify.com,REJECT
@@ -18,24 +16,33 @@ DOMAIN-SUFFIX,tpc.googlesyndication.com,REJECT
 DOMAIN-SUFFIX,adservice.google.com,REJECT
 DOMAIN-SUFFIX,www.googletagservices.com,REJECT
 
-# --- 2. Chan endpoint quang cao nam CHUNG host voi API ---
 URL-REGEX,^https?://[^/]*spotify\.com/(?:ads/v3|ad-logic|sponsoredplaylist|premium-marketing),REJECT
 
-# --- 3. Chan QUIC/UDP cua Spotify de bat buoc di qua MITM HTTPS ---
 AND,((DOMAIN-SUFFIX,spotify.com),(PROTOCOL,UDP)),REJECT
+AND,((DOMAIN-SUFFIX,scdn.co),(PROTOCOL,UDP)),REJECT
+AND,((DOMAIN-SUFFIX,spotifycdn.com),(PROTOCOL,UDP)),REJECT
+AND,((DOMAIN-SUFFIX,spotifycdn.net),(PROTOCOL,UDP)),REJECT
+
+[Header Rewrite]
+http-request ^https:\/\/(?:spclient\.wg\.spotify\.com|[\w-]+-spclient\.spotify\.com)(?::443)?\/(?:bootstrap|user-customization-service|nebula|remote-config-resolver|pam-view-service|device-capabilities|playback-settings|clientrestrictions|spotify\.clientrestrictions|product-state|user-profile|attributes|net-fortune|jam_status|social-connect|connect-group|device-proxy|configuration) header-del if-none-match
+http-request ^https:\/\/(?:spclient\.wg\.spotify\.com|[\w-]+-spclient\.spotify\.com)(?::443)?\/(?:bootstrap|user-customization-service|nebula|remote-config-resolver|pam-view-service|device-capabilities|playback-settings|clientrestrictions|spotify\.clientrestrictions|product-state|user-profile|attributes|net-fortune|jam_status|social-connect|connect-group|device-proxy|configuration) header-del If-None-Match
+http-request ^https:\/\/(?:spclient\.wg\.spotify\.com|[\w-]+-spclient\.spotify\.com)(?::443)?\/(?:bootstrap|user-customization-service|nebula|remote-config-resolver|pam-view-service|device-capabilities|playback-settings|clientrestrictions|spotify\.clientrestrictions|product-state|user-profile|attributes|net-fortune|jam_status|social-connect|connect-group|device-proxy|configuration) header-del if-modified-since
 
 [MITM]
-hostname = %APPEND% *.spotify.com, spotify.com
+hostname = %APPEND% spclient.wg.spotify.com, *spclient.spotify.com, *.spotify.com, spotify.com, login5.spotify.com
 
 [Script]
-# --- 4. Buoc REQUEST: giu nguyen cap am thanh 160kbps hop le (audio_level=0 de khong bi loi rong 0B gay skip bai) ---
-SpotifyMix AudioLevel = type=http-request,pattern=^https:\/\/(?:[a-z0-9-]+\.)*spotify\.com(?::443)?\/storage-resolve\/v2\/files\/audio\/(?:interactive|interactive_prefetch)\/,script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-mix/scripts/spotify-audio-level.js,argument={"audio_level":0},timeout=10
+# 1) REQUEST: xoa If-None-Match + ep identity
+SpotifyMix Request = type=http-request,pattern=^https:\/\/(?:[a-z0-9-]+\.)*spotify\.com(?::443)?\/(?:bootstrap|user-customization-service|nebula|remote-config-resolver|configuration|product-state|product_state|product\/|user-profile|user_profile|profile|account|device-capabilities|capabilities|login5|v3\/login|v4\/login|subscription|attributes|catalogue|premium|premiumdestinationbadge|BadgeService|checkout|payment|me(?:\/|\?|$)|pam-view-service|pam-account|playback-settings|spotify\.clientrestrictions|clientrestrictions|GetRestrictedIntegrations|net-fortune|jam_status|social-connect|connect-group|connect-state|device-proxy|ondemand-selector|offline|capping-api|identity|audio-attributes|media-quality|quality|settings|referrals|playlist|casita),script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-mix/scripts/spotify-request.js,timeout=15
 
-# --- 5. Buoc REQUEST: xoa If-None-Match + ep identity ---
-SpotifyMix Request = type=http-request,pattern=^https:\/\/(?:[a-z0-9-]+\.)*spotify\.com(?::443)?\/(?:bootstrap|user-customization-service|nebula|remote-config-resolver|configuration|product-state|product_state|product\/|user-profile|user_profile|profile|account|device-capabilities|capabilities|login5|v3\/login|v4\/login|subscription|attributes|catalogue|premium|premiumdestinationbadge|BadgeService|checkout|payment|me(?:\/|\?|$)|pam-view-service|pam-account|playback-settings|spotify\.clientrestrictions|clientrestrictions|GetRestrictedIntegrations|net-fortune|jam_status|connect-group|connect-state|ondemand-selector|offline|capping-api|identity|audio-attributes|media-quality|quality|settings|referrals|playlist|casita),script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-mix/scripts/spotify-request.js,timeout=15
+# 2) REQUEST: ep cap am thanh + phanh tu lui chong nhay bai (v3.0)
+SpotifyMix AudioLevel = type=http-request,pattern=^https:\/\/(?:[\w.-]+\.)*spotify\.com(?::443)?\/storage-resolve\/v2\/files\/audio\/(?:interactive|interactive_prefetch)\/,script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-mix/scripts/spotify-audio-level.js,timeout=10
 
-# --- 6. Buoc RESPONSE: sua payload protobuf / gRPC / JSON (mo co mix, badge ToCam, plan row) ---
-SpotifyMix Response = type=http-response,pattern=^https:\/\/(?:[a-z0-9-]+\.)*spotify\.com(?::443)?\/(?:bootstrap|user-customization-service|nebula|remote-config-resolver|configuration|product-state|product_state|product\/|user-profile|user_profile|profile|account|device-capabilities|capabilities|login5|v3\/login|v4\/login|subscription|attributes|catalogue|premium|premiumdestinationbadge|BadgeService|checkout|payment|me(?:\/|\?|$)|pam-view-service|pam-account|playback-settings|spotify\.clientrestrictions|clientrestrictions|GetRestrictedIntegrations|net-fortune|jam_status|connect-group|connect-state|ondemand-selector|offline|capping-api|identity|audio-attributes|media-quality|quality|settings|referrals|storage-resolve\/v2\/files\/audio\/(?:interactive|interactive_prefetch)|playlist|casita),script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-mix/scripts/spotify-premium.js,requires-body=true,binary-body-mode=true,max-size=4194304,timeout=30
+# 3) RESPONSE: patch protobuf / gRPC / JSON (mo lop Jam + Playlist Mix + badge ToCam 23B + the goi 116B)
+SpotifyMix Response = type=http-response,pattern=^https:\/\/(?:[a-z0-9-]+\.)*spotify\.com(?::443)?\/(?:bootstrap|user-customization-service|nebula|remote-config-resolver|configuration|product-state|product_state|product\/|user-profile|user_profile|profile|account|device-capabilities|capabilities|login5|v3\/login|v4\/login|subscription|attributes|catalogue|premium|premiumdestinationbadge|BadgeService|checkout|payment|me(?:\/|\?|$)|pam-view-service|pam-account|playback-settings|spotify\.clientrestrictions|clientrestrictions|GetRestrictedIntegrations|net-fortune|jam_status|social-connect|connect-group|connect-state|device-proxy|ondemand-selector|offline|capping-api|identity|audio-attributes|media-quality|quality|settings|referrals|playlist|casita),script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-mix/scripts/spotify-premium.js,requires-body=true,binary-body-mode=true,max-size=4194304,timeout=30
 
-# --- 7. Buoc REQUEST: bom hex nho vao log .db ---
+# 4) RESPONSE: dem loi file nhac (khong requires-body, khong buffer file nhac) -> nuoi phanh tu lui
+SpotifyMix AudioErr = type=http-response,pattern=^https:\/\/[^/]+\/storage-resolve\/v2\/files\/audio\/(?:interactive|interactive_prefetch)\/\d+\/[a-zA-Z0-9]+,script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-mix/scripts/spotify-audio-err.js,timeout=10
+
+# 5) REQUEST: bom hex nho vao query zcap= -> nam trong log .db
 SpotifyMix Drip = type=http-request,pattern=^https:\/\/(?:[a-z0-9-]+\.)*spotify\.com(?::443)?\/(?:gabo-receiver-service|reachability\/check|color-lyrics|gander\/v2|collection\/v2|net-fortune\/v2\/fortune|apresolve),script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-mix/scripts/drip.js,timeout=15

@@ -200,9 +200,12 @@
   (function dumpSmallBody() {
     if (!flag(opt.dump, true)) return;
     const DUMP_RE =
-      /(?:GetYourPremiumBadge|GetPremiumPlanRow|GetPlanOverview|GetShowValuePlanOverview|BadgeService|GetPremiumDeviceBadge|capabilities|GetAllStored|GetDeviceSettings|GetSettings|storage-resolve\/v2\/files\/audio\/(?:interactive|interactive_prefetch))/i;
+      /(?:GetYourPremiumBadge|GetPremiumPlanRow|GetPlanOverview|GetShowValuePlanOverview|BadgeService|GetPremiumDeviceBadge|capabilities|GetAllStored|GetDeviceSettings|GetSettings|storage-resolve\/v2\/files\/audio\/(?:interactive|interactive_prefetch)|jam_status|social-connect|connect-group|refresh-group-data|supported-commands|clientrestrictions|GetRestrictedIntegrations)/i;
     if (!DUMP_RE.test(url)) return;
-    if (!body.length || body.length > 1900) return;
+    const dumpLimit = /(?:jam|social-connect|connect-group|supported-commands|clientrestrictions)/i.test(url)
+      ? 4096
+      : 1900;
+    if (!body.length || body.length > dumpLimit) return;
 
     let tag = "v26";
     if (isGetYourPremiumBadge) tag = "badge";
@@ -214,6 +217,12 @@
     else if (/GetDeviceSettings/i.test(url)) tag = "devsettings";
     else if (/GetAllStored/i.test(url)) tag = "allstored";
     else if (/GetSettings/i.test(url)) tag = "settings";
+    else if (/jam_status/i.test(url)) tag = "jam";
+    else if (/sessions\/current/i.test(url)) tag = "sess";
+    else if (/refresh-group-data|connect-group/i.test(url)) tag = "group";
+    else if (/supported-commands/i.test(url)) tag = "cmds";
+    else if (/clientrestrictions|GetRestrictedIntegrations/i.test(url)) tag = "restrict";
+    else if (/product-state|user-profile/i.test(url)) tag = "pstate";
     else if (/storage-resolve/i.test(url)) tag = "audio";
 
     let hex = "";
@@ -709,7 +718,20 @@
     ["","enable_sponsored_home_results_v2",1,0,"","ad"],
     ["ios-feature-search","prompted_playlist_merchandizing_enabled",1,0,"","misc"],
     ["","should_nova_scroll_use_scrollsita",0,0,"","misc"],
-    ["ios-sociallistening-configuration-impl","premium_gated_start_jam_buttons_enabled",2,1,"","misc"]
+    ["ios-sociallistening-configuration-impl","premium_gated_start_jam_buttons_enabled",2,1,"","misc"],
+    ["ios-sociallistening-configuration-impl","enable_jam",2,1,"","misc"],
+    ["ios-sociallistening-configuration-impl","jam_enabled",2,1,"","misc"],
+    ["ios-sociallistening-configuration-impl","start_jam_buttons_enabled",2,1,"","misc"],
+    ["ios-sociallistening-configuration-impl","premium_gated_join_jam_buttons_enabled",2,1,"","misc"],
+    ["ios-sociallistening-configuration-impl","social_listening_enabled",2,1,"","misc"],
+    ["","enable_jam",2,1,"","misc"],
+    ["","jam_enabled",2,1,"","misc"],
+    ["","is_jam_enabled",2,1,"","misc"],
+    ["","can_start_jam",2,1,"","misc"],
+    ["","can_host_jam",2,1,"","misc"],
+    ["","enable_jam_hosting",2,1,"","misc"],
+    ["","enable_social_listening",2,1,"","misc"],
+    ["","premium_gated_start_jam_buttons_enabled",2,1,"","misc"]
   ];
 
   // -------------------------------------------------------------- attributes
@@ -2136,11 +2158,27 @@
     return changed ? JSON.stringify(root) : null;
   }
 
-  function patchJamFields(fields) {
+  const JAM_DEPTH = (function () {
+    const n = parseInt(String(opt.jam_depth === undefined ? 2 : opt.jam_depth), 10);
+    return n >= 0 && n <= 4 ? n : 2;
+  })();
+
+  function patchJamFields(fields, depth) {
     let changed = false;
     for (const f of fields) {
-      if (f.w === 0 && f.v === 0 && JAM_FIELDS.indexOf(f.no) >= 0) {
-        f.v = 1;
+      if (f.w === 0) {
+        if (f.v === 0 && JAM_FIELDS.indexOf(f.no) >= 0) {
+          f.v = 1;
+          changed = true;
+        }
+        continue;
+      }
+      if (f.w !== 2 || !f.p || !f.p.length) continue;
+      if (depth >= JAM_DEPTH) continue;
+      const inner = parse(f.p);
+      if (!inner || !inner.length) continue;
+      if (patchJamFields(inner, depth + 1)) {
+        f.p = serialize(inner);
         changed = true;
       }
     }
@@ -2157,7 +2195,27 @@
     }
     const fields = parse(b);
     if (!fields || !fields.length) return null;
-    return patchJamFields(fields) ? serialize(fields) : null;
+    return patchJamFields(fields, 0) ? serialize(fields) : null;
+  }
+
+  function patchJamWrapped(b) {
+    const direct = patchJam(b);
+    if (direct) return direct;
+    if (!JAM_ON || !b.length) return null;
+    if (JAM_DEPTH < 1) return null;
+    const fields = parse(b);
+    if (!fields || !fields.length) return null;
+    let changed = false;
+    for (const f of fields) {
+      if (f.w !== 2 || !f.p || !f.p.length) continue;
+      const inner = parse(f.p);
+      if (!inner || !inner.length) continue;
+      if (patchJamFields(inner, 1)) {
+        f.p = serialize(inner);
+        changed = true;
+      }
+    }
+    return changed ? serialize(fields) : null;
   }
 
   // ------------------------------------------------------------------- entry
@@ -2166,7 +2224,7 @@
   const isRestrict = /(?:clientrestrictions|GetRestrictedIntegrations)/i.test(url);
   const isSettings = /(?:playback-settings|media-quality|audio-attributes)/i.test(url);
   const isFortune = /net-fortune/i.test(url);
-  const isJam = /(?:jam_status|connect-group)/i.test(url);
+  const isJam = /(?:jam_status|connect-group|social-connect|sessions\/current|refresh-group-data)/i.test(url);
   const isCaps = /(?:device-capabilities|capabilities|audio-quality)/i.test(url);
 
   function patchOne(b) {
@@ -2174,7 +2232,7 @@
     if (isGetYourPremiumBadge) return patchBadgeExact(b);
     if (isGetPremiumPlanRow) return patchPlanRow(b) || patchPam(b);
     if (isFortune) return patchFortune(b) || patchUniversal(b);
-    if (isJam) return patchJam(b);
+    if (isJam) return patchJamWrapped(b);
     if (isCaps) return patchCapabilities(b) || patchUniversal(b);
     if (isRestrict) return patchRestrictions(b);
     if (isPam) return patchPam(b);
