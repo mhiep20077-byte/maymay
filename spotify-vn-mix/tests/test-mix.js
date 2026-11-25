@@ -228,7 +228,6 @@ test("SelectedListContent (/signals & /diff): bơm can-view-transition='true', m
   const bDiff = Buffer.from(resDiff.body);
   assert(bDiff.includes(Buffer.from("autoplay", "utf8")), "Phải bơm f22 chứa signal descriptor 'auto' & 'autoplay'");
   assert(bDiff.includes(Buffer.from("c16a3e0f", "utf8")), "Phải bơm f22 chứa lens 'mix' (c16a3e0f)");
-  assert(bDiff.includes(Buffer.from("can-view-transition", "utf8")), "Phải bơm f3.f12 can-view-transition ngay trên gói /diff kể cả khi thiếu f3");
 
   // 8. Gói /extended-metadata/v0/extended-metadata (extension_kind = 235: MixabilityTrait 59B & extension_kind = 170: AutoLens 'mix' 66B)
   const extMetaMissing = cat(

@@ -2547,9 +2547,10 @@
       }
     }
 
-    // 2) Trên f3 (PlaylistAttributes) cho MỌI gói SelectedListContent (/playlist/v2/playlist/<id>, /diff và /signals):
-    //    Trên acc Free hoặc khi gói /diff chỉ có f1 + f6 (thiếu f3), bắt buộc tạo f3 và bơm đủ can-view-transition="true" + mix-type="allow-custom"!
-    {
+    // 2) Trên f3 (PlaylistAttributes) CHỈ khi f3 đã có sẵn hoặc trên /signals:
+    //    Lưu ý: trên gói /diff 405B (chỉ có f1 + f6={revision}, không có f3), TUYỆT ĐỐI KHÔNG tự tạo f3 rỗng
+    //    vì client sẽ coi đó là lệnh xoá tên playlist (f3.f1 = "")!
+    if (attrFields || isSignalsUrl) {
       if (!attrFields) {
         attrFields = [];
         f3 = fieldBytes(3, new Uint8Array(0));
