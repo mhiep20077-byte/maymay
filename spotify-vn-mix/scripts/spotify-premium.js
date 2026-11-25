@@ -2465,7 +2465,12 @@
   function patchPlaylistMix(b) {
     if (!PLAYLIST_MIX_ON || !b || !b.length) return null;
     if (b[0] === 0x7b || b[0] === 0x5b) return null;
-    if (/(?:permission|\/list\/recents\/|\/count(?:\?|$)|\/members(?:\?|$))/i.test(url) || b.length < 32) {
+    if (
+      /(?:permission|\/list\/recents\/|\/count(?:\?|$)|\/members(?:\?|$)|podcast-chapters|spotify(?:%3a|:)track(?:%3a|:)|\/user\/[^/]+\/rootlist)/i.test(
+        url
+      ) ||
+      b.length < 32
+    ) {
       return null;
     }
     const fields = parse(b);
@@ -2484,10 +2489,10 @@
     if (f3 && f3.w === 2 && f3.p && f3.p.length) {
       attrFields = parse(f3.p);
       if (!attrFields) return null;
-      // Bỏ qua danh sách hệ thống như "recent-searches", "recents", "listen-later"
+      // Bỏ qua danh sách hệ thống như "recent-searches", "recents", "listen-later", "podcast-chapter-lists"
       const f11 = first(attrFields, 11);
       const f11Text = f11 && f11.w === 2 ? text(f11) : null;
-      if (f11Text && /(?:recent-searches|recents|listen-later)/i.test(f11Text)) return null;
+      if (f11Text && /(?:recent-searches|recents|listen-later|podcast-chapter)/i.test(f11Text)) return null;
     }
 
     let changed = false;
@@ -2542,8 +2547,9 @@
       }
     }
 
-    // 2) Trên f3 (PlaylistAttributes) khi f3 đã có sẵn hoặc trên /signals:
-    if (attrFields || isSignalsUrl) {
+    // 2) Trên f3 (PlaylistAttributes) cho MỌI gói SelectedListContent (/playlist/v2/playlist/<id>, /diff và /signals):
+    //    Trên acc Free hoặc khi gói /diff chỉ có f1 + f6 (thiếu f3), bắt buộc tạo f3 và bơm đủ can-view-transition="true" + mix-type="allow-custom"!
+    {
       if (!attrFields) {
         attrFields = [];
         f3 = fieldBytes(3, new Uint8Array(0));
@@ -2614,8 +2620,9 @@
   const isJam = /(?:jam_status|connect-group|social-connect|sessions\/current|refresh-group-data)/i.test(url);
   const isCaps = /(?:device-capabilities|capabilities|audio-quality)/i.test(url);
   const isPlaylist =
-    !/(?:permission|\/list\/recents\/|\/count(?:\?|$)|\/members(?:\?|$))/i.test(url) &&
-    /(?:\/playlist-v2\/v2\/playlist\/|\/playlist\/v2\/playlist\/|\/signals(?:\?|$)|\/diff(?:\?|$))/i.test(url);
+    !/(?:permission|\/list\/recents\/|\/count(?:\?|$)|\/members(?:\?|$)|podcast-chapters|spotify(?:%3a|:)track(?:%3a|:)|\/user\/[^/]+\/rootlist)/i.test(
+      url
+    ) && /(?:\/playlist-v2\/v2\/playlist\/|\/playlist\/v2\/playlist\/)/i.test(url);
   const isExtMeta = /extended-metadata/i.test(url);
 
   function patchOne(b) {
@@ -2669,16 +2676,17 @@
     try {
       if (typeof $notification !== "undefined" && $notification && typeof $notification.post === "function") {
         const pth = url.replace(/^https?:\/\/[^/]+/, "").split("?")[0];
-        const label = isExtMeta
-          ? "MixabilityTrait (235 · 59B)"
-          : isPlaylist
-          ? "Nút Phối (f17/f18/f22)"
-          : isConfigOrAttr
-          ? "Cấu hình Phối (Config/Attr)"
-          : isGetYourPremiumBadge
-          ? "Badge ToCam"
-          : "Hàng gói";
-        $notification.post("[Mix v3.0] " + label, body.length + "B → " + out.length + "B", pth.slice(-60));
+        let label = "Hàng gói";
+        if (isExtMeta) {
+          label = out.length - body.length === 68 ? "AutoLens Mix (170 · 66B)" : "MixabilityTrait (235 · 59B)";
+        } else if (isPlaylist) {
+          label = "Nút Phối (f17/f18/f22)";
+        } else if (isConfigOrAttr) {
+          label = "Cấu hình Phối (Config/Attr)";
+        } else if (isGetYourPremiumBadge) {
+          label = "Badge ToCam";
+        }
+        $notification.post("[Mix v3.2] " + label, body.length + "B → " + out.length + "B", pth.slice(-60));
       }
     } catch (e) {}
   }

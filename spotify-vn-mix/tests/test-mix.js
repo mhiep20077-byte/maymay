@@ -194,7 +194,7 @@ test("SelectedListContent (/signals & /diff): bơm can-view-transition='true', m
   }
   assert(bDef.includes(trackSignal88), "Phải giữ nguyên 100% byte signal của từng bài trong f5");
 
-  // Không được đụng vào /playlist-permission/v1/playlist/<id>/permission/base (11B)
+  // Không được đụng vào /playlist-permission/v1/playlist/<id>/permission/base (11B) hoặc podcast-chapters/spotify%3Atrack%3A.../diff (123B)
   const perm11B = Buffer.from("0a0764656661756c741002", "hex");
   const resPerm = runResponseScript(
     "https://spclient.wg.spotify.com/playlist-permission/v1/playlist/7ejDn9p23d5bQEgtQMxzla/permission/base",
@@ -202,7 +202,18 @@ test("SelectedListContent (/signals & /diff): bơm can-view-transition='true', m
   );
   assert(!resPerm || !resPerm.body, "Tuyệt đối không được sửa gói permission/base 11B");
 
-  // 7. Gói /playlist/v2/playlist/<id>/diff (405B chỉ có f1 + f6 + f17=0 + f18 thiếu quyền) -> nâng f17=1, f18=215B đầy đủ và bơm f22 (auto + autoplay + mix + jam)
+  const podcastChapters123B = cat(
+    fBytes(1, rev24),
+    fBytes(6, cat(fBytes(1, rev24), fBytes(3, rev24))),
+    fVarint(17, 0)
+  );
+  const resPod = runResponseScript(
+    "https://gae2-spclient.spotify.com/playlist/v2/playlist/podcast-chapters/spotify%3Atrack%3A1ApIGNgp1azc0qB61x4GzG/diff",
+    podcastChapters123B
+  );
+  assert(!resPod || !resPod.body, "Tuyệt đối không được sửa gói podcast-chapters/spotify%3Atrack.../diff");
+
+  // 7. Gói /playlist/v2/playlist/<id>/diff (405B chỉ có f1 + f6 + f17=0 + f18 thiếu quyền) -> nâng f17=1, f18=215B đầy đủ, bơm f3.f12 (can-view-transition + mix-type) và bơm f22 (auto + autoplay + mix + jam)
   const diffNoMix = cat(
     fBytes(1, rev24),
     fBytes(6, cat(fBytes(1, rev24), fBytes(3, rev24))),
@@ -213,10 +224,11 @@ test("SelectedListContent (/signals & /diff): bơm can-view-transition='true', m
     "https://spclient.wg.spotify.com/playlist/v2/playlist/7ejDn9p23d5bQEgtQMxzla/diff",
     diffNoMix
   );
-  assert(resDiff && resDiff.body, "Phải nâng cấp gói /diff để mở nút Phối (f17=1, f18=215B, f22)");
+  assert(resDiff && resDiff.body, "Phải nâng cấp gói /diff để mở nút Phối (f17=1, f18=215B, f22, f3.f12)");
   const bDiff = Buffer.from(resDiff.body);
   assert(bDiff.includes(Buffer.from("autoplay", "utf8")), "Phải bơm f22 chứa signal descriptor 'auto' & 'autoplay'");
   assert(bDiff.includes(Buffer.from("c16a3e0f", "utf8")), "Phải bơm f22 chứa lens 'mix' (c16a3e0f)");
+  assert(bDiff.includes(Buffer.from("can-view-transition", "utf8")), "Phải bơm f3.f12 can-view-transition ngay trên gói /diff kể cả khi thiếu f3");
 
   // 8. Gói /extended-metadata/v0/extended-metadata (extension_kind = 235: MixabilityTrait 59B & extension_kind = 170: AutoLens 'mix' 66B)
   const extMetaMissing = cat(
