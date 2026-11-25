@@ -771,7 +771,15 @@
     "high-bitrate": true,
     "audio-quality": "1",
     "loudness-levels": "1:-5.0,0.0,3.0:-2.0",
-    "mixing-tools": "EDIT",
+    // Bắt từ [PHOI-CFG 3/6..6/6] configuration/attributes (7388B Premium):
+    // mixing-tools và mixing-fx-looping-jogwheel là bool_value (field 2 = 1), KHÔNG phải string "EDIT"!
+    "mixing-tools": true,
+    "mixing-fx-looping-jogwheel": true,
+    "has-blend-access": true,
+    "jam": true,
+    "jam-social-session": true,
+    "shows-collection-jam": true,
+    "social-session": true,
     "playlist-mixing": "1",
     "playlist-curation": true,
     "enable-automix": "1",
@@ -792,6 +800,9 @@
 
   const STRIPPED = [
     "payment-state",
+    "payments-locked-state",
+    "client-locked-state",
+    "social-session-free-tier",
     "last-premium-activation-date",
     "on-demand-trial",
     "on-demand-trial-in-progress",
@@ -972,7 +983,7 @@
             scope + "." + name
           ) && !/^disable_/i.test(name);
         const isMixOrJamScope =
-          /(?:playlist[-_]?mix|automix|transition|curation|smart_?reorder|mixing|bpm|sociallistening|listeningparties|\bjam\b|\bmix\b)/i.test(
+          /(?:playlist[-_]?mix|playlistcuration|playlistuxplatformconsumers|sessioncontrol|assistedcuration|blendentity|autolens|automix|transition|curation|smart_?reorder|mixing|bpm|sociallistening|listeningparties|\bjam\b|\bmix\b)/i.test(
             scope + "." + name
           );
         const isNegativeFlag =
@@ -2269,85 +2280,169 @@
     ["automix.mode", "auto"],
     ["mix", "true"],
     ["mix-type", "allow-custom"],
-    ["automix.queue", "true"]
+    ["automix.queue", "true"],
+    ["automix.autoplay", "true"],
+    ["automix.ignore_settings", "true"]
   ];
+
+  // Bắt từ ảnh #0 & #15 (4YvPfs7WpoADAovoaFjRPQ/diff 405B) vs #22 (37i9dQZF1Fs6Dvo6yu9lo4/diff 348B):
+  // Playlist CÓ nút Phối có thêm 3 trường ở cấp gốc của SelectedListContent:
+  //   f17 = 1 (varint)
+  //   f18 = { f1=1, f2=1, f3=1, f3=2, f3=3, f4=1, f5=1, f6=0 }
+  //   f22 = { f1={ f1="auto", f2="auto", f3=[0x08, 0xc8, 0x01] }, f1={ f1="autoplay", f2="df837dbe828a97bbc81428c112eb54d69927ef" } }
+  // Trong khi playlist KHÔNG có nút Phối (#22) trả f17=0, f18={f1=1,f2=0,f4=0,f5=1,f6=0} và thiếu f22!
+  const F18_MIX_CAPABILITIES = serialize([
+    fieldVarint(1, 1),
+    fieldVarint(2, 1),
+    fieldVarint(3, 1),
+    fieldVarint(3, 2),
+    fieldVarint(3, 3),
+    fieldVarint(4, 1),
+    fieldVarint(5, 1),
+    fieldVarint(6, 0)
+  ]);
+  const F22_MIX_SIGNALS = serialize([
+    fieldBytes(
+      1,
+      serialize([
+        fieldString(1, "auto"),
+        fieldString(2, "auto"),
+        fieldBytes(3, new Uint8Array([0x08, 0xc8, 0x01]))
+      ])
+    ),
+    fieldBytes(
+      1,
+      serialize([
+        fieldString(1, "autoplay"),
+        fieldString(2, "df837dbe828a97bbc81428c112eb54d69927ef")
+      ])
+    )
+  ]);
 
   function patchPlaylistMix(b) {
     if (!PLAYLIST_MIX_ON || !b || !b.length) return null;
     if (b[0] === 0x7b || b[0] === 0x5b) return null;
-    // Tuyệt đối không đụng /playlist-permission/.../permission/base (11B)
-    if (/permission/i.test(url) || b.length < 32) return null;
+    if (/(?:permission|\/list\/recents\/|\/count(?:\?|$)|\/members(?:\?|$))/i.test(url) || b.length < 32) {
+      return null;
+    }
     const fields = parse(b);
     if (!fields || !fields.length) return null;
     const f1 = first(fields, 1);
     const f2 = first(fields, 2);
-    // SelectedListContent (playlist / signals / diff) luôn có f1 = revision bytes (16..32B)
-    if (!f1 || f1.w !== 2 || !f1.p || f1.p.length < 16 || f1.p.length > 40) return null;
     let f3 = first(fields, 3);
-    if (!f3 && (!f2 || f2.w !== 0)) return null;
+    const f5 = first(fields, 5);
+    const f6 = first(fields, 6);
+    // SelectedListContent (playlist / signals / diff) luôn có f1 = revision bytes (16..40B)
+    // và ít nhất 1 trong các trường f2 (length), f3 (attributes), f5 (items), hoặc f6 (diff).
+    if (!f1 || f1.w !== 2 || !f1.p || f1.p.length < 16 || f1.p.length > 40) return null;
+    if (!f2 && !f3 && !f5 && !f6) return null;
 
-    let attrFields = [];
+    let attrFields = null;
     if (f3 && f3.w === 2 && f3.p && f3.p.length) {
-      const parsedAttr = parse(f3.p);
-      if (!parsedAttr) return null;
-      attrFields = parsedAttr;
-    } else if (!f3) {
-      f3 = fieldBytes(3, new Uint8Array(0));
-      const idx = fields.indexOf(f2 || f1);
-      fields.splice(idx + 1, 0, f3);
-    } else {
-      return null;
+      attrFields = parse(f3.p);
+      if (!attrFields) return null;
+      // Bỏ qua danh sách hệ thống như "recent-searches" (f11="recent-searches" ở ảnh #22)
+      const f11 = first(attrFields, 11);
+      const f11Text = f11 && f11.w === 2 ? text(f11) : null;
+      if (f11Text && /recent-searches/i.test(f11Text)) return null;
     }
-
-    // Kiểm tra xem server có đang trả mix="false" (người dùng vừa bấm tắt Phối) không
-    let serverExplicitMixFalse = false;
-    for (const af of attrFields) {
-      if (af.no !== 12 || af.w !== 2 || !af.p || !af.p.length) continue;
-      const kv = parse(af.p);
-      if (!kv) continue;
-      const k = text(first(kv, 1));
-      const v = text(first(kv, 2));
-      if (k && k.toLowerCase() === "mix" && v && v.toLowerCase() === "false") {
-        serverExplicitMixFalse = true;
-      }
-    }
-
-    const targetList = FORCE_MIX_ON || !serverExplicitMixFalse ? PLAYLIST_MIX_ATTRS : PLAYLIST_MIX_ATTRS;
-    const applyList = FORCE_MIX_ON ? PLAYLIST_MIX_ACTIVE_ATTRS : targetList;
 
     let changed = false;
-    const seen = Object.create(null);
+    const isSignalsUrl = /\/signals(?:\?|$)/i.test(url);
 
-    for (const af of attrFields) {
-      if (af.no !== 12 || af.w !== 2 || !af.p || !af.p.length) continue;
-      const kv = parse(af.p);
-      if (!kv || !kv.length) continue;
-      const kf = first(kv, 1);
-      const vf = first(kv, 2);
-      const ks = kf && kf.w === 2 ? text(kf) : null;
-      const vs = vf && vf.w === 2 ? text(vf) : null;
-      if (!ks) continue;
-      for (const pair of applyList) {
-        if (ks.toLowerCase() === pair[0]) {
-          seen[pair[0]] = true;
-          if (vs !== pair[1]) {
-            af.p = serialize([fieldString(1, pair[0]), fieldString(2, pair[1])]);
-            changed = true;
-          }
-          break;
+    // 1) Trên /playlist/v2/playlist/<id> và /diff (không phải /signals):
+    //    Nâng f17 = 1, f18 = F18_MIX_CAPABILITIES, và bơm f22 = F22_MIX_SIGNALS
+    //    để client vẽ nút [Phối] và tự động gọi /signals!
+    if (!isSignalsUrl) {
+      const f17 = first(fields, 17);
+      if (f17 && f17.w === 0) {
+        if (f17.v !== 1) {
+          f17.v = 1;
+          changed = true;
         }
+      } else if (!f17) {
+        fields.push(fieldVarint(17, 1));
+        changed = true;
+      }
+
+      const f18 = first(fields, 18);
+      if (f18 && f18.w === 2) {
+        if (!same(f18.p, F18_MIX_CAPABILITIES)) {
+          f18.p = F18_MIX_CAPABILITIES;
+          changed = true;
+        }
+      } else if (!f18) {
+        fields.push(fieldBytes(18, F18_MIX_CAPABILITIES));
+        changed = true;
+      }
+
+      const f22 = first(fields, 22);
+      if (!f22) {
+        fields.push(fieldBytes(22, F22_MIX_SIGNALS));
+        changed = true;
       }
     }
 
-    for (const pair of applyList) {
-      if (!seen[pair[0]]) {
-        attrFields.push(fieldBytes(12, serialize([fieldString(1, pair[0]), fieldString(2, pair[1])])));
+    // 2) Trên f3 (PlaylistAttributes) khi f3 đã có sẵn hoặc trên /signals:
+    if (attrFields || isSignalsUrl) {
+      if (!attrFields) {
+        attrFields = [];
+        f3 = fieldBytes(3, new Uint8Array(0));
+        const idx = fields.indexOf(f2 || f1);
+        fields.splice(idx + 1, 0, f3);
+      }
+
+      let serverExplicitMixFalse = false;
+      for (const af of attrFields) {
+        if (af.no !== 12 || af.w !== 2 || !af.p || !af.p.length) continue;
+        const kv = parse(af.p);
+        if (!kv) continue;
+        const k = text(first(kv, 1));
+        const v = text(first(kv, 2));
+        if (k && k.toLowerCase() === "mix" && v && v.toLowerCase() === "false") {
+          serverExplicitMixFalse = true;
+        }
+      }
+
+      const applyList = FORCE_MIX_ON ? PLAYLIST_MIX_ACTIVE_ATTRS : PLAYLIST_MIX_ATTRS;
+      const seen = Object.create(null);
+      let attrChanged = false;
+
+      for (const af of attrFields) {
+        if (af.no !== 12 || af.w !== 2 || !af.p || !af.p.length) continue;
+        const kv = parse(af.p);
+        if (!kv || !kv.length) continue;
+        const kf = first(kv, 1);
+        const vf = first(kv, 2);
+        const ks = kf && kf.w === 2 ? text(kf) : null;
+        const vs = vf && vf.w === 2 ? text(vf) : null;
+        if (!ks) continue;
+        for (const pair of applyList) {
+          if (ks.toLowerCase() === pair[0]) {
+            seen[pair[0]] = true;
+            if (vs !== pair[1] && !(pair[0] === "mix" && serverExplicitMixFalse && !FORCE_MIX_ON)) {
+              af.p = serialize([fieldString(1, pair[0]), fieldString(2, pair[1])]);
+              attrChanged = true;
+            }
+            break;
+          }
+        }
+      }
+
+      for (const pair of applyList) {
+        if (!seen[pair[0]]) {
+          attrFields.push(fieldBytes(12, serialize([fieldString(1, pair[0]), fieldString(2, pair[1])])));
+          attrChanged = true;
+        }
+      }
+
+      if (attrChanged) {
+        f3.p = serialize(attrFields);
         changed = true;
       }
     }
 
     if (!changed) return null;
-    f3.p = serialize(attrFields);
     return serialize(fields);
   }
 
@@ -2360,8 +2455,8 @@
   const isJam = /(?:jam_status|connect-group|social-connect|sessions\/current|refresh-group-data)/i.test(url);
   const isCaps = /(?:device-capabilities|capabilities|audio-quality)/i.test(url);
   const isPlaylist =
-    !/permission/i.test(url) &&
-    /(?:\/playlist-v2\/|\/playlist\/v2\/|\/signals(?:\?|$)|\/diff(?:\?|$))/i.test(url);
+    !/(?:permission|\/list\/recents\/|\/count(?:\?|$)|\/members(?:\?|$))/i.test(url) &&
+    /(?:\/playlist-v2\/v2\/playlist\/|\/playlist\/v2\/playlist\/|\/signals(?:\?|$)|\/diff(?:\?|$))/i.test(url);
 
   function patchOne(b) {
     if (isBadgeDevice) return null;

@@ -106,8 +106,8 @@ test("v3/configuration: tự động inject các cờ TransitionRowInteractionVa
   assert(b.includes(Buffer.from("playlist_mixing_enabled", "utf8")), "Phải có playlist_mixing_enabled");
 });
 
-// 3. User customization / attributes: mixing-tools=EDIT & playlist-mixing=1
-test("user-customization-service: bơm 'mixing-tools'='EDIT' và 'playlist-mixing'='1'", () => {
+// 3. User customization / attributes: mixing-tools=true (bool_value field 2=1) & mixing-fx-looping-jogwheel=true
+test("user-customization-service: bơm 'mixing-tools'=true (bool_value f2=1) và 'mixing-fx-looping-jogwheel'=true", () => {
   const dummyAttrs = cat(
     fBytes(1, cat(
       fBytes(1, cat(
@@ -115,7 +115,8 @@ test("user-customization-service: bơm 'mixing-tools'='EDIT' và 'playlist-mixin
         fBytes(3, fVarint(1, 0))
       )),
       fBytes(3, cat(
-        fBytes(1, cat(fStr(1, "type"), fBytes(2, cat(fStr(4, "free")))))
+        fBytes(1, cat(fStr(1, "type"), fBytes(2, cat(fStr(4, "free"))))),
+        fBytes(1, cat(fStr(1, "social-session-free-tier"), fBytes(2, cat(fVarint(2, 1)))))
       ))
     ))
   );
@@ -126,8 +127,8 @@ test("user-customization-service: bơm 'mixing-tools'='EDIT' và 'playlist-mixin
   assert(res && res.body, "Phải có body trả về");
   const b = Buffer.from(res.body);
   assert(b.includes(Buffer.from("mixing-tools", "utf8")), "Phải có key mixing-tools");
-  assert(b.includes(Buffer.from("EDIT", "utf8")), "mixing-tools phải có giá trị EDIT");
-  assert(b.includes(Buffer.from("playlist-mixing", "utf8")), "Phải có key playlist-mixing");
+  assert(b.includes(Buffer.from("mixing-fx-looping-jogwheel", "utf8")), "Phải có key mixing-fx-looping-jogwheel");
+  assert(!b.includes(Buffer.from("social-session-free-tier", "utf8")), "Phải xoá social-session-free-tier");
 });
 
 // 4. GetRestrictedIntegrations: gRPC trả về empty buffer (0B) giải phóng lock MIX
@@ -194,12 +195,27 @@ test("SelectedListContent (/signals & /diff): bơm can-view-transition='true', m
   assert(bDef.includes(trackSignal88), "Phải giữ nguyên 100% byte signal của từng bài trong f5");
 
   // Không được đụng vào /playlist-permission/v1/playlist/<id>/permission/base (11B)
-  const perm11B = Buffer.from("0a050801100118011002", "hex");
+  const perm11B = Buffer.from("0a0764656661756c741002", "hex");
   const resPerm = runResponseScript(
     "https://spclient.wg.spotify.com/playlist-permission/v1/playlist/7ejDn9p23d5bQEgtQMxzla/permission/base",
     perm11B
   );
   assert(!resPerm || !resPerm.body, "Tuyệt đối không được sửa gói permission/base 11B");
+
+  // 7. Gói /playlist/v2/playlist/<id>/diff (405B chỉ có f1 + f6 + f17=0 + f18 thiếu quyền) -> nâng f17=1, f18 đầy đủ và bơm f22 (auto + autoplay)
+  const diffNoMix = cat(
+    fBytes(1, rev24),
+    fBytes(6, cat(fBytes(1, rev24), fBytes(3, rev24))),
+    fVarint(17, 0),
+    fBytes(18, cat(fVarint(1, 1), fVarint(2, 0), fVarint(4, 0), fVarint(5, 1), fVarint(6, 0)))
+  );
+  const resDiff = runResponseScript(
+    "https://spclient.wg.spotify.com/playlist/v2/playlist/7ejDn9p23d5bQEgtQMxzla/diff",
+    diffNoMix
+  );
+  assert(resDiff && resDiff.body, "Phải nâng cấp gói /diff để mở nút Phối (f17=1, f18, f22)");
+  const bDiff = Buffer.from(resDiff.body);
+  assert(bDiff.includes(Buffer.from("autoplay", "utf8")), "Phải bơm f22 chứa signal descriptor 'auto' & 'autoplay'");
 });
 
 console.log("\n--------------------------------------------------------------");
