@@ -1,6 +1,12 @@
 // ============================================================================
 // spotify-vn-v26 / scripts/sniff-clean.js
-// Build: 2026-11-25 · v2.6.1 · type: http-request + http-response
+// Build: 2026-11-25 · v2.6.2 · type: http-request + http-response
+//
+// Nâng cấp v2.6.2:
+//   - Với JSON <= 1200B (như v1/capabilities 574B/583B), in TOÀN BỘ các cặp
+//     key=value trong JSON (không lọc INTEREST_KEYS nữa) để thấy trọn vẹn
+//     mọi trường mà không bị ẩn.
+//   - Với protobuf/gRPC, luôn in hex 32 byte đầu tiên lên banner.
 // ============================================================================
 
 (function () {
@@ -187,12 +193,14 @@
 
   if (kind === "json") {
     var fullText = decodeUtf8(core, 32768);
-    rawTextSample = fullText.slice(0, 600).replace(/\s+/g, " ");
+    rawTextSample = fullText.slice(0, 800).replace(/\s+/g, " ");
+    var dumpAllJsonKeys = core.length <= 1200 || /capabilities|GetPremiumPlanRow/i.test(shortPath);
     try {
       var obj = JSON.parse(fullText);
       var seenKeys = 0;
+      var maxKeys = dumpAllJsonKeys ? 30 : 12;
       var walk = function (node, depth) {
-        if (depth > 6 || seenKeys >= 12 || !node || typeof node !== "object") return;
+        if (depth > 6 || seenKeys >= maxKeys || !node || typeof node !== "object") return;
         if (Array.isArray(node)) {
           for (var ai = 0; ai < Math.min(node.length, 5); ai++) walk(node[ai], depth + 1);
           return;
@@ -202,10 +210,10 @@
           var v = node[k];
           if (v && typeof v === "object") {
             walk(v, depth + 1);
-          } else if (INTEREST_KEYS.test(k)) {
+          } else if (dumpAllJsonKeys || INTEREST_KEYS.test(k)) {
             summaryParts.push(k + "=" + String(v).slice(0, 32));
             seenKeys++;
-            if (seenKeys >= 12) break;
+            if (seenKeys >= maxKeys) break;
           }
         }
       };
@@ -229,7 +237,7 @@
     var hotWords = [];
     var otherWords = [];
     var HOT_RE =
-      /(?:free|premium|very_?high|high|normal|low|320|160|96|vorbis|ogg|flac|bitrate|quality|offline|download|badge|plan|locked|restrict|535353|1ed760|spotify|tocam|individual)/i;
+      /(?:free|premium|very_?high|high|normal|low|320|160|96|vorbis|ogg|flac|bitrate|quality|offline|download|badge|plan|locked|restrict|535353|b3b3b3|1ed760|spotify|tocam|individual)/i;
     for (var hi = 0; hi < asciiHits.length; hi++) {
       var s = asciiHits[hi];
       if (HOT_RE.test(s)) {

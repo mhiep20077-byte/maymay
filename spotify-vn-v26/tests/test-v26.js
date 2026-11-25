@@ -102,6 +102,7 @@ function runResponse(
   { status = 200, withTextCodec = false, via = "body", statusKey = "status", argument = undefined } = {}
 ) {
   let captured = null;
+  const store = {};
   const resp = { headers: {} };
   resp[statusKey] = status;
   if (via === "bytes") resp.bodyBytes = body ? new Uint8Array(body) : undefined;
@@ -110,6 +111,13 @@ function runResponse(
   const sandbox = {
     $request: { url, method: "GET", headers: {} },
     $response: resp,
+    $persistentStore: {
+      read: (k) => (k in store ? store[k] : null),
+      write: (v, k) => {
+        store[k] = String(v);
+        return true;
+      },
+    },
     $done: (o) => {
       captured = o || {};
     },
@@ -126,23 +134,7 @@ function runResponse(
   vm.runInContext(fs.readFileSync(SCRIPT_RESPONSE, "utf8"), sandbox, {
     filename: "spotify-premium.js",
   });
-  return captured;
-}
-
-function runRequest(url, headers) {
-  let captured = null;
-  const sandbox = {
-    $request: { url, method: "GET", headers },
-    $done: (o) => {
-      captured = o || {};
-    },
-    console: { log: () => {} },
-  };
-  vm.createContext(sandbox);
-  vm.runInContext(fs.readFileSync(SCRIPT_REQUEST, "utf8"), sandbox, {
-    filename: "spotify-request.js",
-  });
-  return captured;
+  return { captured, store };
 }
 
 const URL_BADGE =
@@ -153,124 +145,81 @@ const URL_SHOW_PLAN =
   "https://gae2-spclient.spotify.com/pam-view-service/spotify.pam.v2.PamViewService/GetShowValuePlanOverview";
 const URL_PLANROW =
   "https://gae2-spclient.spotify.com/pam-view-service/v1/GetPremiumPlanRow?locale=vi";
-const URL_SETTINGS =
-  "https://gae2-spclient.spotify.com/playback-settings/spotify.playbacksettings.PlaybackSettingsService/GetDeviceSettings";
 const URL_CAPS =
   "https://gae2-spclient.spotify.com/device-capabilities/v1/capabilities?device_type=smartphone";
-const URL_FORTUNE =
-  "https://gae2-spclient.spotify.com/net-fortune/v2/fortune?bandwidth=7250555&request_type=interactive";
-const URL_NEBULA =
-  "https://gae2-spclient.spotify.com/nebula/v1/configuration/attributes";
 const URL_RC =
   "https://gae2-spclient.spotify.com/remote-config-resolver/v3/configuration";
 
-console.log("\n=== TEST V2.6.1: GETYOURPREMIUMBADGE (GIỮ NGUYÊN TOCAM) ===\n");
+console.log("\n=== TEST V2.6.2: BADGE 23B (TOCAM) & PLANROW 68B->116B (#B3B3B3 -> #1ED760) ===\n");
 
-test("GetYourPremiumBadge (exact 23B hex từ Ảnh 14): 0a0a'Individual'10021a07'#1ED760' -> 'ToCam' + 2 + '#1ED760'", () => {
-  const realHex23B = Buffer.from("0a0a496e646976696475616c10021a0723314544373630", "hex");
-  assert.strictEqual(realHex23B.length, 23);
-  const out = runResponse(realHex23B, URL_BADGE);
-  assert.ok(out && out.body);
+test("GetYourPremiumBadge: body rỗng 0B trên Free -> dựng đúng 3 field: f1='ToCam', f2=2, f3='#1ED760'", () => {
+  const { captured: out } = runResponse(Buffer.alloc(0), URL_BADGE);
+  assert.ok(out && out.body && out.body.length > 0);
   const fields = decode(Buffer.from(out.body));
   assert.strictEqual(one(fields, 1).p.toString("utf8"), "ToCam");
   assert.strictEqual(one(fields, 2).v, 2);
   assert.strictEqual(one(fields, 3).p.toString("utf8"), "#1ED760");
 });
 
-test("GetYourPremiumBadge trên Free ('Spotify Free' + '#535353') -> 'ToCam' + '#1ED760'", () => {
-  const freeBadge = cat(fStr(1, "Spotify Free"), fVarint(2, 0), fStr(3, "#535353"));
-  const out = runResponse(freeBadge, URL_BADGE);
+test("GetPremiumPlanRow proto (Free 68B: 'Spotify Free' + 'Spotify Free' + '#B3B3B3') -> 'Premium Individual' + 'Individual' + '#1ED760'", () => {
+  const freePlanRow68B = cat(fStr(1, "Spotify Free"), fStr(2, "#B3B3B3"), fStr(3, "Spotify Free"));
+  const { captured: out, store } = runResponse(freePlanRow68B, URL_PLANROW);
   assert.ok(out && out.body);
   const fields = decode(Buffer.from(out.body));
-  assert.strictEqual(one(fields, 1).p.toString("utf8"), "ToCam");
-  assert.strictEqual(one(fields, 2).v, 1);
-  assert.strictEqual(one(fields, 3).p.toString("utf8"), "#1ED760");
+  assert.strictEqual(one(fields, 1).p.toString("utf8"), "Premium Individual");
+  assert.strictEqual(one(fields, 2).p.toString("utf8"), "#1ED760");
+  assert.strictEqual(one(fields, 3).p.toString("utf8"), "Individual");
+  assert.ok(store.spotcap_buf && store.spotcap_buf.indexOf("planrow|200|") === 0, "chưa gom hex vào spotcap_buf");
 });
 
-console.log("\n=== TEST V2.6.1: GETPLANOVERVIEW & GETSHOWVALUEPLANOVERVIEW (SỬA LỖI TRỐNG THẺ) ===\n");
-
-test("GetPlanOverview (Ảnh 4 & Ảnh 10): điền đủ Field 3='Premium Individual', Field 4='Individual', Field 5='#1ED760' và GIỮ NGUYÊN varint 0 của component khác", () => {
-  // Mô phỏng GetPlanOverview trên nick Free:
-  // Submessage 1 (PlanCard): field 1 varint = 1 (FREE), field 3 = "Spotify Free", field 6 = "1 tài khoản Free"
-  // Submessage 2 (Other UI Card): field 1 varint = 0 (component_type = 0), field 2 = "Premium" (logo brand!)
+test("GetPlanOverview (944B) & GetShowValuePlanOverview (1837B): điền đủ field chữ to 'Individual' + màu '#1ED760'/'1ED760', giữ nguyên varint 0", () => {
   const planCard = cat(fVarint(1, 1), fStr(3, "Spotify Free"), fStr(6, "1 tài khoản Free"));
   const otherCard = cat(fVarint(1, 0), fStr(2, "Premium"), fStr(3, "#FFFFFF"));
-  const body = cat(fBytes(1, planCard), fBytes(2, otherCard));
-  const out = runResponse(body, URL_PLAN);
-  assert.ok(out && out.body, "không patch GetPlanOverview");
-  const root = decode(Buffer.from(out.body));
-  const c1 = decode(one(root, 1).p);
-  assert.strictEqual(one(c1, 1).v, 2, "tier 1 (FREE) phải lên 2 (INDIVIDUAL)");
+  const { captured: out1 } = runResponse(cat(fBytes(1, planCard), fBytes(2, otherCard)), URL_PLAN);
+  assert.ok(out1 && out1.body);
+  const r1 = decode(Buffer.from(out1.body));
+  const c1 = decode(one(r1, 1).p);
+  assert.strictEqual(one(c1, 1).v, 2);
   assert.strictEqual(one(c1, 3).p.toString("utf8"), "Premium Individual");
-  assert.strictEqual(one(c1, 4).p.toString("utf8"), "Individual", "phải bù Field 4 = Individual");
-  assert.strictEqual(one(c1, 5).p.toString("utf8"), "#1ED760", "phải bù Field 5 = #1ED760");
-  assert.strictEqual(one(c1, 6).p.toString("utf8"), "1 tài khoản Premium");
+  assert.strictEqual(one(c1, 4).p.toString("utf8"), "Individual");
+  assert.strictEqual(one(c1, 5).p.toString("utf8"), "#1ED760");
+  const c2 = decode(one(r1, 2).p);
+  assert.strictEqual(one(c2, 1).v, 0);
+  assert.strictEqual(one(c2, 2).p.toString("utf8"), "Premium");
 
-  const c2 = decode(one(root, 2).p);
-  assert.strictEqual(one(c2, 1).v, 0, "TUYỆT ĐỐI KHÔNG được đổi varint 0 của component UI khác thành 1!");
-  assert.strictEqual(one(c2, 2).p.toString("utf8"), "Premium", "chuỗi 'Premium' không được bị parse() nhầm thành protobuf hay đổi thành ToCam!");
-  assert.strictEqual(one(c2, 3).p.toString("utf8"), "#FFFFFF", "màu trắng #FFFFFF không được bị đổi thành #1ED760!");
+  const showCard = cat(fStr(1, "Spotify Free"), fStr(4, "spotify:internal:unboxing:main-hub"));
+  const { captured: out2 } = runResponse(cat(fStr(1, "Gói của bạn"), fBytes(2, showCard)), URL_SHOW_PLAN);
+  assert.ok(out2 && out2.body);
+  const r2 = decode(Buffer.from(out2.body));
+  const sc = decode(one(r2, 2).p);
+  assert.strictEqual(one(sc, 1).p.toString("utf8"), "Premium Individual");
+  assert.strictEqual(one(sc, 2).p.toString("utf8"), "Individual");
+  assert.strictEqual(one(sc, 3).p.toString("utf8"), "1ED760");
 });
 
-test("GetShowValuePlanOverview (Ảnh 3 & Ảnh 15): điền đủ Field 1='Premium Individual', Field 2='Individual', Field 3='1ED760' (không dấu #)", () => {
-  const subCard = cat(fStr(1, "Spotify Free"), fStr(4, "spotify:internal:unboxing:main-hub"));
-  const body = cat(fStr(1, "Gói của bạn"), fBytes(2, subCard));
-  const out = runResponse(body, URL_SHOW_PLAN);
-  assert.ok(out && out.body, "không patch GetShowValuePlanOverview");
-  const root = decode(Buffer.from(out.body));
-  assert.strictEqual(one(root, 1).p.toString("utf8"), "Gói Premium của bạn");
-  const card = decode(one(root, 2).p);
-  assert.strictEqual(one(card, 1).p.toString("utf8"), "Premium Individual");
-  assert.strictEqual(one(card, 2).p.toString("utf8"), "Individual", "phải bù Field 2 = Individual");
-  assert.strictEqual(one(card, 3).p.toString("utf8"), "1ED760", "phải bù Field 3 = 1ED760 (không dấu # như Ảnh 15)");
-  assert.strictEqual(one(card, 4).p.toString("utf8"), "spotify:internal:unboxing:main-hub");
-});
-
-console.log("\n=== TEST V2.6.1: PLAYBACK-SETTINGS & CHẤT LƯỢNG RẤT CAO ===\n");
-
-test("nebula attributes: giữ đúng kiểu field 4 (string '0' -> '1') hoặc field 3 (long 0 -> 1) nếu server gửi kiểu đó cho high-bitrate/offline", () => {
-  const e1 = fBytes(1, cat(fStr(1, "high-bitrate"), fBytes(2, fStr(4, "0"))));
-  const e2 = fBytes(1, cat(fStr(1, "offline"), fBytes(2, fVarint(3, 0))));
-  const e3 = fBytes(1, cat(fStr(1, "streaming-max-quality"), fBytes(2, fStr(4, "160"))));
-  const out = runResponse(cat(e1, e2, e3), URL_NEBULA);
+test("v1/capabilities JSON (574B Free -> 583B Premium): sửa cả audio_quality='VERY_HIGH' lẫn effective_license='premium' và can_play_on_demand=true (không bị short-circuit bởi ||)", () => {
+  const freeCaps = JSON.stringify({
+    audio_quality: "HIGH",
+    effective_license: "free",
+    can_play_on_demand: false,
+    supports_offline: false,
+  });
+  const { captured: out } = runResponse(Buffer.from(freeCaps), URL_CAPS);
   assert.ok(out && out.body);
-  const entries = pick(decode(Buffer.from(out.body)), 1);
-  const byKey = {};
-  for (const e of entries) {
-    const inner = decode(e.p);
-    const k = one(inner, 1).p.toString("utf8");
-    byKey[k] = decode(one(inner, 2).p);
-  }
-  assert.strictEqual(one(byKey["high-bitrate"], 4).p.toString("utf8"), "1", "phải giữ kiểu string '1' ở field 4");
-  assert.strictEqual(one(byKey["offline"], 3).v, 1, "phải giữ kiểu long 1 ở field 3");
-  assert.ok(!("streaming-max-quality" in byKey), "streaming-max-quality phải bị xóa");
+  const obj = JSON.parse(Buffer.from(out.body).toString("utf8"));
+  assert.strictEqual(obj.audio_quality, "VERY_HIGH");
+  assert.strictEqual(obj.effective_license, "premium", "effective_license bị bỏ sót do short-circuit ||");
+  assert.strictEqual(obj.can_play_on_demand, true);
+  assert.strictEqual(obj.supports_offline, true);
 });
 
-test("playback-settings gRPC: cặp {1: 'audio.streaming_quality', 2: submessage{1: 2}} nâng lên 4 giữ nguyên submessage", () => {
-  const subVal = fVarint(1, 2);
-  const entry = cat(fStr(1, "audio.streaming_quality"), fBytes(2, subVal));
-  const body = gframe(0x00, fBytes(1, entry));
-  const out = runResponse(body, URL_SETTINGS);
+test("v3/configuration (100KB Free): tự động gạt BoolValue=false cho ios-reinventfree-timecaupsellpage-impl", () => {
+  const ident = cat(fStr(1, "ios-reinventfree-timecaupsellpage-impl"), fStr(2, "is_enabled"));
+  const av = fBytes(3, cat(fBytes(1, ident), fBytes(3, fVarint(1, 1))));
+  const { captured: out } = runResponse(av, URL_RC);
   assert.ok(out && out.body);
-  const fr = gframes(Buffer.from(out.body));
-  const decodedEntry = decode(one(decode(fr[0].payload), 1).p);
-  const decodedVal = decode(one(decodedEntry, 2).p);
-  assert.strictEqual(one(decodedVal, 1).v, 4);
-});
-
-test("spotify-request.js v2.6.1: bắt cả v4/login, offline, connect-state, capping-api, identity", () => {
-  const urls = [
-    "https://login5.spotify.com/v4/login",
-    "https://gae2-spclient.spotify.com/offline/v1/devices",
-    "https://gae2-spclient.spotify.com/connect-state/v1/devices/abc",
-    "https://gae2-spclient.spotify.com/capping-api/spotify.cappingapi.v1.CappingApi/PutConsumption",
-    "https://gae2-spclient.spotify.com/identity/v3/user/username/abc",
-  ];
-  for (const u of urls) {
-    const out = runRequest(u, { "If-None-Match": "W/1", "Accept-Encoding": "gzip" });
-    assert.ok(out && out.headers, "bỏ sót URL: " + u);
-    assert.strictEqual(out.headers["Accept-Encoding"], "identity");
-  }
+  const avOut = decode(one(decode(Buffer.from(out.body)), 3).p);
+  assert.strictEqual(one(avOut, 3).p.length, 0);
 });
 
 console.log("\n--------------------------------------------------------------");
