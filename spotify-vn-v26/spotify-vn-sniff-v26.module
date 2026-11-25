@@ -1,13 +1,30 @@
-#!name=Spotify VN Sniff v2.6 (Bat goi day du body + hex)
-#!desc=Module bat goi tin SACH v2.6: da them binary-body-mode=true va spotify-request.js de chong 304 / gzip / cat byte 0x80. Luon in ma hex 32 byte dau cua moi goi protobuf/gRPC len banner.
+#!name=Spotify VN Sniff v2.6 (Chuyen bat Nut Phoi: Jam + Playlist Mix)
+#!desc=Module bat goi tin SACH chuyen san Nut Phoi (Jam / Connect / Playlist Mix / Transitions / Restrictions). Tu dong bo qua cac goi PAM/Quality cu de khong ngap banner, chi noi thong bao + in cau truc Protobuf F[...] + ma Hex + bom full hex vao log .db (zcap=) cho cac goi lien quan den Nut Phoi.
 #!category=Spotify
 #!author=c4 / ToCam
 #!homepage=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-v26
 
+[Rule]
+AND,((DOMAIN-SUFFIX,spotify.com),(PROTOCOL,UDP)),REJECT
+AND,((DOMAIN-SUFFIX,scdn.co),(PROTOCOL,UDP)),REJECT
+
+[Header Rewrite]
+http-request ^https:\/\/(?:spclient\.wg\.spotify\.com|[\w-]+-spclient\.spotify\.com)(?::443)?\/(?:bootstrap|user-customization-service|ucs|nebula|remote-config-resolver|configuration|clientrestrictions|spotify\.clientrestrictions|jam_status|social-connect|connect-group|connect-state|device-proxy|playlist|playlist-v2|lens|mix|mixing|automix|transition|curation|casita|blend|attributes) header-del if-none-match
+http-request ^https:\/\/(?:spclient\.wg\.spotify\.com|[\w-]+-spclient\.spotify\.com)(?::443)?\/(?:bootstrap|user-customization-service|ucs|nebula|remote-config-resolver|configuration|clientrestrictions|spotify\.clientrestrictions|jam_status|social-connect|connect-group|connect-state|device-proxy|playlist|playlist-v2|lens|mix|mixing|automix|transition|curation|casita|blend|attributes) header-del If-None-Match
+http-request ^https:\/\/(?:spclient\.wg\.spotify\.com|[\w-]+-spclient\.spotify\.com)(?::443)?\/(?:bootstrap|user-customization-service|ucs|nebula|remote-config-resolver|configuration|clientrestrictions|spotify\.clientrestrictions|jam_status|social-connect|connect-group|connect-state|device-proxy|playlist|playlist-v2|lens|mix|mixing|automix|transition|curation|casita|blend|attributes) header-del if-modified-since
+
 [MITM]
-hostname = %APPEND% *.spotify.com, spotify.com
+hostname = %APPEND% spclient.wg.spotify.com, *spclient.spotify.com, *.spotify.com, spotify.com
 
 [Script]
-SpotVN26_Clean_Req = type=http-request,pattern=^https://[^/]*spotify\.com(:443)?/(?:bootstrap|user-customization-service|nebula|remote-config-resolver|product-state|product_state|product/|user-profile|user_profile|profile|account|device-capabilities|login5|v3/login|v4/login|subscription|attributes|catalogue|premium|checkout|payment|me(?:/|\?|$)|pam-view-service|pam-account|playback-settings|spotify\.clientrestrictions|clientrestrictions|GetRestrictedIntegrations|net-fortune|jam_status|connect-group|connect-state|ondemand-selector|offline|capping-api|identity|audio-attributes|media-quality|quality|settings|referrals),script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-v26/scripts/spotify-request.js,timeout=15
-SpotVN26_Sniff_Req = type=http-request,pattern=^https://[^/]*spotify\.com(:443)?/.*(storage-resolve|net-fortune),script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-v26/scripts/sniff-clean.js,timeout=10
-SpotVN26_Sniff_Res = type=http-response,pattern=^https://[^/]*spotify\.com(:443)?/.*(storage-resolve|net-fortune|device-capabilities|playback|audio|quality|bitrate|ondemand|bootstrap|ucs|resolve|nebula|product|profile|attributes|subscription|catalogue|premium|identity|login5|v3/login|v4/login|pam|plan|tier|entitlement|capability|capabilities|restriction|badge|account|checkout|payment|offline|capping|ViewService|Settings|Quality|Plan|Profile|Premium|referrals),script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-v26/scripts/sniff-clean.js,requires-body=true,binary-body-mode=true,max-size=524288,timeout=20
+# 1) REQUEST: xoa If-None-Match de server tra full body 200 (khong tra 304 rong)
+SpotVN26_Clean_Req = type=http-request,pattern=^https://(spclient\.wg\.spotify\.com|[a-z0-9-]+-spclient\.spotify\.com)(:443)?/(bootstrap|user-customization-service|ucs|nebula|remote-config-resolver|configuration|spotify\.clientrestrictions|clientrestrictions|GetRestrictedIntegrations|jam_status|jam|social-connect|connect-group|connect-state|device-proxy|supported-commands|playlist|playlist-v2|lens|mix|mixing|automix|transition|curation|casita|blend|attributes|audio-attributes|audio-features),script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-v26/scripts/spotify-request.js,timeout=15
+
+# 2) REQUEST: bat request khi bam nut Phoi / Connect / Playlist Mix
+SpotVN26_Sniff_Req = type=http-request,pattern=^https://(spclient\.wg\.spotify\.com|[a-z0-9-]+-spclient\.spotify\.com)(:443)?/.*(jam_status|social-connect|connect-group|connect-state|device-proxy|supported-commands|clientrestrictions|GetRestrictedIntegrations|playlist-v2|lens|mix|mixing|automix|transition|curation|casita|blend),script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-v26/scripts/sniff-clean.js,timeout=10
+
+# 3) RESPONSE: bat toan bo goi tin Nut Phoi (Jam + Playlist Mix + Config + API moi tren spclient, tru storage-resolve)
+SpotVN26_Sniff_Res = type=http-response,pattern=^https://(spclient\.wg\.spotify\.com|[a-z0-9-]+-spclient\.spotify\.com)(:443)?/(social-connect|jam_status|jam|connect-group|connect-state|device-proxy|supported-commands|clientrestrictions|spotify\.clientrestrictions|GetRestrictedIntegrations|playlist|playlist-v2|lens|mix|mixing|automix|transition|curation|casita|blend|audio-attributes|audio-features|remote-config-resolver|configuration|user-customization-service|ucs|bootstrap|nebula|attributes|player|context-player|play-session|party|group|session|sessions|v1|v2|v3),script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-v26/scripts/sniff-clean.js,requires-body=true,binary-body-mode=true,max-size=524288,timeout=20
+
+# 4) REQUEST: bom full hex da gom vao query zcap= de xuat file .db khong bi cat
+SpotVN26_Drip = type=http-request,pattern=^https://([a-z0-9-]+\.)*spotify\.com(:443)?/(gabo-receiver-service|reachability/check|color-lyrics|gander/v2|collection/v2|net-fortune/v2/fortune|apresolve),script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/spotify-vn-v26/scripts/drip.js,timeout=15

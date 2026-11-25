@@ -1,12 +1,27 @@
 // ============================================================================
 // spotify-vn-v26 / scripts/sniff-clean.js
-// Build: 2026-11-25 · v2.6.2 · type: http-request + http-response
+// Build: 2026-11-25 · v2.6.3 (Chuyên bắt Nút Phối: Jam + Playlist Mix + Config)
 //
-// Nâng cấp v2.6.2:
-//   - Với JSON <= 1200B (như v1/capabilities 574B/583B), in TOÀN BỘ các cặp
-//     key=value trong JSON (không lọc INTEREST_KEYS nữa) để thấy trọn vẹn
-//     mọi trường mà không bị ẩn.
-//   - Với protobuf/gRPC, luôn in hex 32 byte đầu tiên lên banner.
+// Nhiệm vụ:
+//   - KHÔNG sửa request/response ($done({})).
+//   - Tập trung 100% vào các gói quyết định NÚT PHỐI:
+//       1. [PHOI-JAM]  social-connect, jam_status, sessions/current,
+//                      connect-group, refresh-group-data, connect-state,
+//                      device-proxy, supported-commands, clientrestrictions,
+//                      GetRestrictedIntegrations
+//       2. [PHOI-MIX]  playlist, playlist-v2, lens, mix, mixing, automix,
+//                      transition, curation, casita, blend, audio-features
+//       3. [PHOI-CFG]  remote-config-resolver, configuration, bootstrap,
+//                      user-customization-service, ucs, nebula, attributes
+//                      -> Quét riêng các cờ chứa jam / mix / transition /
+//                         automix / social / curation / blend / restrict!
+//       4. [PHOI-MOI]  Bất kỳ endpoint mới nào trên spclient xuất hiện khi
+//                      mở Playlist hoặc bảng Thiết bị / Đang phát (trừ các
+//                      gói PAM/Quality/Telemetry đã biết để khỏi rác màn hình).
+//   - Giải mã cấu trúc Protobuf 2 tầng (F[1=0, 2={1=1,2="..."}]) + in mã Hex
+//     ngay trên banner thông báo của Shadowrocket.
+//   - Tự động lưu full hex (tới 4096B) vào hàng đợi spotcap_buf để drip.js
+//     bơm vào file log .db (zcap=).
 // ============================================================================
 
 (function () {
@@ -18,16 +33,35 @@
     return;
   }
 
+  var opt = {};
+  try {
+    opt = typeof $argument === "string" ? JSON.parse($argument || "{}") : $argument || {};
+  } catch (e) {
+    opt = {};
+  }
+  var showOldGroups = opt.all === true || opt.all === "true" || opt.all === 1;
+
   var pathOnly = url.replace(/^https?:\/\/[^/]+/, "");
   var shortPath = pathOnly.split("?")[0] || "/";
   var lowPath = pathOnly.toLowerCase();
 
+  // 1. Bỏ qua tuyệt đối các luồng media, telemetry, ảnh, lyrics, quảng cáo
   if (
-    !/storage-resolve/i.test(shortPath) &&
-    (/\/(?:image|scdn|lyrics|color-lyrics|track-metadata|playlist-metadata|canvaz|event-service|log-service|melody|head-files|play-history|recently-played)\//i.test(
+    /\/(?:storage-resolve|playplay|image|images|scdn|lyrics|color-lyrics|track-metadata|canvaz|event-service|log-service|gabo-receiver-service|melody|head-files|play-history|recently-played|gander|collection|reachability|net-fortune|ads|ad-logic|pendragon)\//i.test(
       shortPath
     ) ||
-      /\.(?:png|jpg|jpeg|webp|mp3|ogg|mp4|m4a|svg|css|js)(?:\?|$)/i.test(shortPath))
+    /\.(?:png|jpg|jpeg|webp|mp3|ogg|mp4|m4a|svg|css|js)(?:\?|$)/i.test(shortPath)
+  ) {
+    $done({});
+    return;
+  }
+
+  // 2. Bỏ qua các gói PAM / Quality cũ đã chốt xong (trừ khi bật argument all=true)
+  if (
+    !showOldGroups &&
+    /(?:pam-view-service|pam-account|GetYourPremiumBadge|GetPremiumPlanRow|GetPlanOverview|GetShowValuePlanOverview|BadgeService|GetPremiumDeviceBadge|device-capabilities|playback-settings)/i.test(
+      shortPath
+    )
   ) {
     $done({});
     return;
@@ -35,37 +69,33 @@
 
   function detectGroup(p) {
     if (
-      /(?:storage-resolve|net-fortune|device-capabilities|playback|audio|quality|bitrate|ondemand|capability|capabilities|settings|offline|capping)/i.test(
+      /(?:jam_status|\/jam|social-connect|connect-group|connect-state|refresh-group-data|sessions\/current|\/sessions|device-proxy|supported-commands|clientrestrictions|getrestrictedintegrations|listening-party|\/party)/i.test(
         p
       )
     ) {
-      return "CHAT LUONG";
+      return "PHOI-JAM";
     }
     if (
-      /(?:pam|plan|restriction|getrestrictedintegrations|getpremiumplanrow|getplanoverview|getshowvalueplanoverview|badge|account|checkout|payment)/i.test(
+      /(?:playlist-v2|playlist|\/lens|mixing|automix|transition|curation|casita|\/blend|\/mix|audio-features|smart-reorder|audio-attributes)/i.test(
         p
       )
     ) {
-      return "QUAN LY GOI";
+      return "PHOI-MIX";
     }
     if (
-      /(?:bootstrap|user-customization-service|ucs|resolve|nebula|product|profile|attributes|subscription|catalogue|premium|identity|login5|v3\/login|v4\/login|remote-config|tier|entitlement|\/me(?:\/|\?|$))/i.test(
+      /(?:remote-config-resolver|\/configuration|user-customization-service|\/ucs\/|bootstrap|nebula|\/attributes)/i.test(
         p
       )
     ) {
-      return "HO SO";
+      return "PHOI-CFG";
     }
-    return "";
+    return "PHOI-MOI";
   }
 
   var group = detectGroup(lowPath);
-  if (!group) {
-    $done({});
-    return;
-  }
 
   function postNotify(title, sub, body) {
-    var b = String(body || "").slice(0, 220);
+    var b = String(body || "").slice(0, 230);
     try {
       if (typeof $notification !== "undefined" && $notification && typeof $notification.post === "function") {
         $notification.post(title, sub, b);
@@ -78,8 +108,8 @@
   function endpointName(p) {
     var parts = p.split("/").filter(Boolean);
     if (!parts.length) return "/";
-    if (parts.length >= 2 && parts[parts.length - 1].length > 24) {
-      return parts[parts.length - 2] + "/" + parts[parts.length - 1].slice(0, 12) + "..";
+    if (parts.length >= 2 && parts[parts.length - 1].length > 22) {
+      return parts[parts.length - 2] + "/" + parts[parts.length - 1].slice(0, 14) + "..";
     }
     return parts.slice(-2).join("/");
   }
@@ -87,22 +117,21 @@
   var ep = endpointName(shortPath);
   var isResponse = typeof $response !== "undefined" && $response !== null;
 
+  // ------------------------------------------------------------------ REQUEST
   if (!isResponse) {
-    if (/storage-resolve\/v2\/files\/audio\/(?:interactive|interactive_prefetch)\//i.test(lowPath) || /net-fortune/i.test(lowPath)) {
-      var levelMatch = pathOnly.match(/\/(?:interactive|interactive_prefetch)\/(\d+)\//i);
+    if (group === "PHOI-JAM" || group === "PHOI-MIX") {
       var qMatch = pathOnly.match(/\?(.+)$/);
-      var reqInfo = (levelMatch ? "cap=" + levelMatch[1] + " " : "") + (qMatch ? qMatch[1].slice(0, 120) : shortPath);
+      var reqInfo = shortPath + (qMatch ? "?" + qMatch[1].slice(0, 80) : "");
       try {
-        console.log("[spot-sniff-v26][REQ][" + group + "] " + url);
+        console.log("[spot-sniff-phoi][REQ][" + group + "] " + ($request.method || "GET") + " " + url);
       } catch (e) {}
-      if (levelMatch) {
-        postNotify("[" + group + "] REQ " + ep, "Xin file am thanh", reqInfo);
-      }
+      postNotify("[" + group + "] REQ " + ep, ($request.method || "GET") + " request", reqInfo);
     }
     $done({});
     return;
   }
 
+  // ----------------------------------------------------------------- RESPONSE
   var status = Number($response.status || $response.statusCode || 0);
   var rawBody = $response.bodyBytes || $response.body;
 
@@ -120,17 +149,17 @@
   }
 
   function toHex(bytes, maxLen) {
-    var n = Math.min(bytes.length, maxLen || 32);
+    var n = Math.min(bytes.length, maxLen || 48);
     var out = "";
     for (var i = 0; i < n; i++) {
       var h = bytes[i].toString(16);
-      out += (h.length < 2 ? "0" + h : h);
+      out += h.length < 2 ? "0" + h : h;
     }
     return out;
   }
 
   function decodeUtf8(bytes, maxLen) {
-    var n = Math.min(bytes.length, maxLen || 4096);
+    var n = Math.min(bytes.length, maxLen || 65536);
     var slice = bytes.subarray(0, n);
     if (typeof TextDecoder !== "undefined") {
       try {
@@ -145,17 +174,52 @@
   var bytes = toBytes(rawBody);
   var len = bytes.length;
 
-  if (status === 304 || len === 0) {
-    var emptyMsg = status === 304 ? "304 Not Modified (App dung cache)" : "Body rong (" + status + ")";
+  // Lưu full hex vào spotcap_buf để drip.js gửi về log .db (tối đa 4096B)
+  function saveToDripBuffer(tagLabel, b) {
+    if (!b || !b.length || b.length > 4096) return;
     try {
-      console.log("[spot-sniff-v26][RES][" + group + "] " + status + " " + shortPath + " -> " + emptyMsg);
+      if (typeof $persistentStore === "undefined" || !$persistentStore) return;
+      var fullHex = toHex(b, b.length);
+      var sigKey = "spotcap_sig_" + tagLabel;
+      var sigVal = status + "|" + b.length + "|" + fullHex.slice(0, 32);
+      if ($persistentStore.read(sigKey) === sigVal) return;
+      $persistentStore.write(sigVal, sigKey);
+
+      var buf = $persistentStore.read("spotcap_buf") || "";
+      buf += tagLabel + "|" + status + "|" + b.length + "|" + fullHex + "\n";
+      if (buf.length > 45000) buf = buf.slice(buf.length - 45000);
+      $persistentStore.write(buf, "spotcap_buf");
     } catch (e) {}
-    postNotify("[" + group + "] " + ep, "HTTP " + status, emptyMsg);
+  }
+
+  var dripTag = "phoi";
+  if (/jam_status/i.test(shortPath)) dripTag = "jam";
+  else if (/sessions\/current|\/sessions/i.test(shortPath)) dripTag = "sess";
+  else if (/refresh-group-data|connect-group/i.test(shortPath)) dripTag = "group";
+  else if (/connect-state/i.test(shortPath)) dripTag = "cstate";
+  else if (/supported-commands|device-proxy/i.test(shortPath)) dripTag = "cmds";
+  else if (/clientrestrictions|GetRestrictedIntegrations/i.test(shortPath)) dripTag = "restrict";
+  else if (/lens|mix|transition|curation|casita|playlist/i.test(shortPath)) dripTag = "mix";
+
+  if (len > 0 && (group === "PHOI-JAM" || group === "PHOI-MIX" || group === "PHOI-MOI")) {
+    saveToDripBuffer(dripTag, bytes);
+  }
+
+  if (status === 304 || len === 0) {
+    var emptyMsg = status === 304 ? "304 Not Modified (Cache)" : "Body rong 0B (HTTP " + status + ")";
+    try {
+      console.log("[spot-sniff-phoi][RES][" + group + "] " + status + " " + shortPath + " -> " + emptyMsg);
+    } catch (e) {}
+    if (group === "PHOI-JAM" || group === "PHOI-MIX" || status >= 400) {
+      postNotify("[" + group + "] " + ep, "HTTP " + status + " · 0B", emptyMsg);
+    }
     $done({});
     return;
   }
 
+  // Bóc khung gRPC 5-byte nếu có
   function splitGrpc(b) {
+    if (!b || b.length < 5) return null;
     var frames = [];
     var i = 0;
     while (i + 5 <= b.length) {
@@ -186,23 +250,106 @@
     else if (b0 === 0x1f || b0 === 0x78) kind = "gzip";
   }
 
-  var INTEREST_KEYS =
-    /^(?:product|type|catalogue|plan|tier|badge|title|name|label|text|color|tint|bg|background|quality|bitrate|max_?bitrate|audio|stream|download|offline|premium|is_?premium|ads|locked|restricted|can_?join|is_?host|jam|player-license|payment-state)/i;
+  // Giải mã cấu trúc Protobuf 2 tầng thành chuỗi F[1=0, 2={1=1,2="abc"}]
+  function readVarint(b, st) {
+    var val = 0;
+    var shift = 0;
+    while (st.i < b.length) {
+      var byte = b[st.i++];
+      val += (byte & 0x7f) * Math.pow(2, shift);
+      if (!(byte & 0x80)) return val;
+      shift += 7;
+      if (shift > 56) return -1;
+    }
+    return -1;
+  }
+
+  function isPrintableAscii(b) {
+    if (!b || !b.length || b.length > 64) return false;
+    for (var i = 0; i < b.length; i++) {
+      if (b[i] < 0x20 || b[i] >= 0x7f) return false;
+    }
+    return true;
+  }
+
+  function decodeProtoMap(b, depth, maxFields) {
+    if (!b || !b.length || depth > 2) return "";
+    var st = { i: 0 };
+    var parts = [];
+    var limit = maxFields || 10;
+    while (st.i < b.length && parts.length < limit) {
+      var key = readVarint(b, st);
+      if (key <= 0) break;
+      var no = Math.floor(key / 8);
+      var wire = key % 8;
+      if (no <= 0 || no > 50000) break;
+      if (wire === 0) {
+        var v = readVarint(b, st);
+        if (v < 0) break;
+        parts.push(no + "=" + v);
+      } else if (wire === 2) {
+        var l = readVarint(b, st);
+        if (l < 0 || l > b.length - st.i) break;
+        var sub = b.subarray(st.i, st.i + l);
+        st.i += l;
+        if (l === 0) {
+          parts.push(no + '=""');
+        } else if (isPrintableAscii(sub)) {
+          parts.push(no + '="' + decodeUtf8(sub, 28) + '"');
+        } else if (depth < 2) {
+          var innerMap = decodeProtoMap(sub, depth + 1, 6);
+          if (innerMap) parts.push(no + "={" + innerMap + "}");
+          else parts.push(no + ":len" + l);
+        } else {
+          parts.push(no + ":len" + l);
+        }
+      } else if (wire === 1 || wire === 5) {
+        var sz = wire === 1 ? 8 : 4;
+        if (st.i + sz > b.length) break;
+        st.i += sz;
+        parts.push(no + ":f" + sz * 8);
+      } else {
+        break;
+      }
+    }
+    return parts.join(",");
+  }
+
+  // Trích toàn bộ chuỗi ASCII trong binary
+  function extractStrings(b, maxCount) {
+    var out = [];
+    var cur = "";
+    var lim = maxCount || 80;
+    for (var i = 0; i < b.length && out.length < lim; i++) {
+      var ch = b[i];
+      if (ch >= 0x20 && ch < 0x7f) {
+        cur += String.fromCharCode(ch);
+        if (cur.length > 72) cur = cur.slice(0, 72);
+      } else {
+        if (cur.length >= 3) out.push(cur);
+        cur = "";
+      }
+    }
+    if (cur.length >= 3) out.push(cur);
+    return out;
+  }
+
+  var PHOI_KEYWORD_RE =
+    /(?:jam|mix|mixing|automix|transition|social|listening|curation|casita|blend|reorder|group|connect|session|host|join|participant|restrict|locked|lens|cue|bpm)/i;
+
   var summaryParts = [];
   var rawTextSample = "";
 
   if (kind === "json") {
     var fullText = decodeUtf8(core, 32768);
-    rawTextSample = fullText.slice(0, 800).replace(/\s+/g, " ");
-    var dumpAllJsonKeys = core.length <= 1200 || /capabilities|GetPremiumPlanRow/i.test(shortPath);
+    rawTextSample = fullText.slice(0, 900).replace(/\s+/g, " ");
     try {
       var obj = JSON.parse(fullText);
       var seenKeys = 0;
-      var maxKeys = dumpAllJsonKeys ? 30 : 12;
       var walk = function (node, depth) {
-        if (depth > 6 || seenKeys >= maxKeys || !node || typeof node !== "object") return;
+        if (depth > 6 || seenKeys >= 18 || !node || typeof node !== "object") return;
         if (Array.isArray(node)) {
-          for (var ai = 0; ai < Math.min(node.length, 5); ai++) walk(node[ai], depth + 1);
+          for (var ai = 0; ai < Math.min(node.length, 6); ai++) walk(node[ai], depth + 1);
           return;
         }
         for (var k in node) {
@@ -210,54 +357,55 @@
           var v = node[k];
           if (v && typeof v === "object") {
             walk(v, depth + 1);
-          } else if (dumpAllJsonKeys || INTEREST_KEYS.test(k)) {
-            summaryParts.push(k + "=" + String(v).slice(0, 32));
+          } else if (core.length <= 1500 || PHOI_KEYWORD_RE.test(k) || PHOI_KEYWORD_RE.test(String(v))) {
+            summaryParts.push(k + "=" + String(v).slice(0, 30));
             seenKeys++;
-            if (seenKeys >= maxKeys) break;
           }
         }
       };
       walk(obj, 0);
     } catch (e) {}
   } else if (kind !== "gzip") {
-    var asciiHits = [];
-    var cur = "";
-    for (var bi = 0; bi < core.length && asciiHits.length < 30; bi++) {
-      var ch = core[bi];
-      if (ch >= 0x20 && ch < 0x7f) {
-        cur += String.fromCharCode(ch);
-        if (cur.length > 64) cur = cur.slice(0, 64);
-      } else {
-        if (cur.length >= 3) asciiHits.push(cur);
-        cur = "";
+    var allStrings = extractStrings(core, 250);
+    var phoiStrings = [];
+    var otherStrings = [];
+    for (var si = 0; si < allStrings.length; si++) {
+      var s = allStrings[si];
+      if (PHOI_KEYWORD_RE.test(s)) {
+        if (phoiStrings.indexOf(s) < 0) phoiStrings.push(s);
+      } else if (otherStrings.length < 5 && s.length >= 4 && !/^[0-9a-f]{16,}$/i.test(s)) {
+        otherStrings.push(s);
       }
     }
-    if (cur.length >= 3) asciiHits.push(cur);
 
-    var hotWords = [];
-    var otherWords = [];
-    var HOT_RE =
-      /(?:free|premium|very_?high|high|normal|low|320|160|96|vorbis|ogg|flac|bitrate|quality|offline|download|badge|plan|locked|restrict|535353|b3b3b3|1ed760|spotify|tocam|individual)/i;
-    for (var hi = 0; hi < asciiHits.length; hi++) {
-      var s = asciiHits[hi];
-      if (HOT_RE.test(s)) {
-        if (hotWords.indexOf(s) < 0) hotWords.push(s);
-      } else if (otherWords.length < 6 && s.length >= 4 && !/^[0-9a-f]{16,}$/i.test(s)) {
-        otherWords.push(s);
+    // Với PHOI-CFG (v3/configuration, ucs, bootstrap): chỉ báo những cờ liên quan tới Phối/Jam/Mix
+    if (group === "PHOI-CFG") {
+      if (phoiStrings.length) {
+        summaryParts.push("Co Phoi: " + phoiStrings.slice(0, 8).join(" | "));
+      } else {
+        summaryParts.push("Khong thay co jam/mix trong " + len + "B");
       }
+    } else {
+      var fmap = decodeProtoMap(core, 0, 10);
+      if (fmap) summaryParts.push("F[" + fmap + "]");
+      if (phoiStrings.length) summaryParts.push(phoiStrings.slice(0, 5).join("|"));
+      else if (otherStrings.length) summaryParts.push(otherStrings.slice(0, 3).join("|"));
+      summaryParts.push("hex=" + toHex(core, 40));
     }
-    summaryParts = hotWords.slice(0, 5).concat(otherWords.slice(0, 2));
-    summaryParts.push("hex=" + toHex(core, 32));
-    rawTextSample = asciiHits.join(" | ").slice(0, 500) + " [hex:" + toHex(core, 64) + "]";
+    rawTextSample =
+      (phoiStrings.length ? phoiStrings.join(" | ") : otherStrings.join(" | ")).slice(0, 400) +
+      " [hex:" +
+      toHex(core, 96) +
+      "]";
   } else {
-    summaryParts.push("Du lieu nen gzip (" + len + "B)");
+    summaryParts.push("Gzip " + len + "B");
   }
 
-  var summaryText = summaryParts.length ? summaryParts.join(" · ") : "Binary " + len + "B (hex=" + toHex(core, 24) + ")";
+  var summaryText = summaryParts.length ? summaryParts.join(" · ") : "Binary " + len + "B · hex=" + toHex(core, 40);
 
   try {
     console.log(
-      "[spot-sniff-v26][RES][" +
+      "[spot-sniff-phoi][RES][" +
         group +
         "] " +
         status +
@@ -267,7 +415,7 @@
         len +
         "B " +
         shortPath +
-        " | summary: " +
+        " | " +
         summaryText +
         (rawTextSample ? " | raw: " + rawTextSample : "")
     );
@@ -279,11 +427,11 @@
     return String(h);
   }
 
-  var sig = hashStr(group + "|" + shortPath + "|" + status + "|" + summaryText.slice(0, 80));
+  var sig = hashStr(group + "|" + shortPath + "|" + status + "|" + summaryText.slice(0, 100));
   var shouldNotify = true;
   try {
     if (typeof $persistentStore !== "undefined" && $persistentStore && $persistentStore.read) {
-      var storeKey = "spot_sniff_recent_v26";
+      var storeKey = "spot_sniff_phoi_v263";
       var rawStore = $persistentStore.read(storeKey) || "[]";
       var recent = [];
       try {
@@ -295,14 +443,14 @@
       var now = Date.now();
       var fresh = [];
       for (var ri = 0; ri < recent.length; ri++) {
-        if (recent[ri] && now - recent[ri].t < 30000) {
+        if (recent[ri] && now - recent[ri].t < 20000) {
           fresh.push(recent[ri]);
           if (recent[ri].s === sig) shouldNotify = false;
         }
       }
       if (shouldNotify) {
         fresh.push({ s: sig, t: now });
-        if (fresh.length > 15) fresh = fresh.slice(fresh.length - 15);
+        if (fresh.length > 20) fresh = fresh.slice(fresh.length - 20);
         if ($persistentStore.write) $persistentStore.write(JSON.stringify(fresh), storeKey);
       }
     }
