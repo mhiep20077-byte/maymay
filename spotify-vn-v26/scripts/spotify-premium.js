@@ -1,48 +1,44 @@
 // ============================================================================
 // spotify-vn-v26 / scripts/spotify-premium.js
-// Build: 2026-11-25 · v2.6.0
+// Build: 2026-11-25 · v2.6.1
 //
-// Bản v2.6 (tách riêng thư mục spotify-vn-v26, giữ nguyên bản v2.5 chính):
-//   1. Sửa GetYourPremiumBadge & pam-view-service:
-//      - Bằng chứng từ ảnh bắt gói tài khoản Premium thật:
-//        GetYourPremiumBadge trả về `proto · 23B` gồm `#1ED760` + `Individual`
-//        (12B text + 9B color + 2B varint/header = 23B).
-//      - Ở v2.5, tài khoản Free trả về "Spotify Free" + màu xám (hoặc thiếu màu):
-//        `patchBadgeStrings` chạy trước nhưng `BADGE_ONLY` chỉ bắt chữ "Premium"
-//        (bỏ qua "Spotify Free"), sau đó `rewriteStrings` đổi "Spotify Free" ->
-//        "Spotify Premium", còn `recolor` chỉ tìm màu xanh (bỏ qua màu xám) và
-//        `boostEnum` bị skip vì `changed` đã true -> kết quả badge vẫn MÀU XÁM
-//        và chữ là "Spotify Premium"!
-//      - v2.6:
-//        + Mở rộng `BADGE_ONLY` bắt cả "Free", "Spotify Free", "Premium",
-//          "Spotify Premium", "Individual".
-//        + Chạy `rewriteStrings` TRƯỚC `patchBadgeStrings` trong `patchPam`.
-//        + Thêm `recolorPam`: đổi mọi mã màu xám (`GREY_HEX`, `GREY_RGB`, hoặc
-//          mã hex màu nền `#RRGGBB` khác màu chữ đen `#121212`) sang `#1ED760`.
-//        + Thêm `boostPamEnums`: luôn nâng varint `0 -> 1` trong message PAM
-//          kể cả khi đi kèm field string.
-//        + Nếu `/GetYourPremiumBadge` chỉ có field chữ mà server omit field màu,
-//          bơm thêm field màu `#1ED760` vào đúng vị trí protobuf.
-//   2. Sửa lỗi mở khóa Chất lượng "Rất cao" (Very High):
-//      - Sửa lỗi chí mạng trong `setQualityPairs`: v2.5 thấy cặp `{1: key, 2: val}`
-//        là ghi đè `TE.encode("VERY_HIGH")` ngay cả khi `val` là một submessage
-//        protobuf (`\x08\x02`), tạo ra wire-type 6 bất hợp lệ làm Spotify iOS
-//        vứt bỏ toàn bộ response `playback-settings`. v2.6 chỉ thay khi `val`
-//        thực sự là chuỗi ASCII khớp `QUALITY_WORDS`, còn nếu là submessage thì
-//        đi vào bên trong submessage để nâng chuỗi quality / varint enum / bitrate.
-//      - Trong `patchSettings`: gọi luôn `patchCapabilitiesFields` để nâng mọi
-//        chuỗi `LOW|NORMAL|HIGH|AUTO -> VERY_HIGH`, `OGG_VORBIS_96|160 -> 320`,
-//        và varint bitrate `96000|160000 -> 320000`.
-//      - Trong `ATTR_CORE`: bổ sung `"offline": true`, `"unlimited-skips": true`,
-//        `"unlimited_skips": true`, `"shuffle": false`, `"ad-catalogues": ""`
-//        và thêm `patchAttributesDeep` để `/nebula` dù bọc ở cấp nào cũng nhận
-//        đủ `ATTR_CORE` và xóa sạch `STRIPPED`.
-//      - Trong `patchConfiguration`: tự động gạt `BoolValue = false` cho mọi
-//        `AssignedValue` có tên chứa `upsell` hoặc nằm trong scope
-//        `ios-settings-mediaqualitypageplugin-impl` có tên chứa
-//        `upsell|lock|restrict|pigeon|gbb|free`.
-//      - Hỗ trợ `$response.body` dạng `string` trên Shadowrocket (khi endpoint
-//        trả JSON hoặc UTF-8 mà không có `$response.bodyBytes`).
+// Bản v2.6.1 (dựa trên 15 ảnh bắt gói + hex thật từ nick có Premium thật):
+//   1. Giữ nguyên 100% viên badge `ToCam` màu xanh `#1ED760` chữ đen ở menu
+//      `Gói của bạn -> [ToCam]` (`GetYourPremiumBadge`, 23B:
+//      `hex=0a0a496e646976696475616c10021a0723314544373630` ->
+//      Field 1 string = BADGE_TEXT, Field 2 varint = 2, Field 3 string = #1ED760).
+//   2. Sửa lỗi trống khung thẻ ở trang `Gói Premium của bạn`
+//      (`GetShowValuePlanOverview`, 1837B) và `Quản lý gói đăng ký`
+//      (`GetPlanOverview`, 944B):
+//      - Nguyên nhân mất chữ ở v2.6.0:
+//        a) `parse(f.p)` được gọi TRƯỚC khi kiểm tra `f.p` có phải là chuỗi
+//           văn bản thuần túy không. Chuỗi `"Premium"` (`50 72 65 6d 69 75 6d`)
+//           và nhiều chuỗi tiếng Việt tình cờ khớp wire format protobuf
+//           (`0x50` = field 10 varint 114, `0x65` = field 12 fixed32 `"mium"`),
+//           khiến `boostPamEnums` tưởng chuỗi chữ là submessage rồi sửa byte
+//           bên trong và biến mọi varint `0` (component_type=0, is_hidden=0)
+//           thành `1` -> ẩn sạch chữ bên trong thẻ!
+//        b) Từ Ảnh 10 (`GetPlanOverview` 944B: `Premium Individual" · Individual* · #1ED760`)
+//           và Ảnh 15 (`GetShowValuePlanOverview` 1837B: `Premium Individual · Individual · 1ED760"`),
+//           submessage thẻ gói đăng ký của nick Premium thật có đủ 3 trường:
+//           + Trong `GetPlanOverview`: Field 3 (`0x1a`) = `"Premium Individual"`,
+//             Field 4 (`0x22` = `"`) = `"Individual"`, Field 5 (`0x2a` = `*`) = `"#1ED760"`.
+//           + Trong `GetShowValuePlanOverview`: Field 1 (`0x0a`) = `"Premium Individual"`,
+//             Field 2 (`0x12`) = `"Individual"`, Field 3 (`0x1a`) = `"1ED760"` (không dấu `#`).
+//           Trên nick Free, server chỉ gửi `"Spotify Free"` mà thiếu trường chữ to
+//           `"Individual"` và mã màu xanh!
+//      - Cách sửa ở v2.6.1:
+//        + Thêm `asPrintableString(bytes)`: mọi field không chứa byte `< 0x20`
+//          đều được nhận diện 100% là chuỗi văn bản trước khi gọi `parse()`.
+//        + Bỏ hoàn toàn `boostPamEnums` trên `GetPlanOverview` và `GetShowValuePlanOverview`.
+//        + Thêm `patchPlanOverview`: tự động điền đủ `(Field 3, Field 4, Field 5)` cho
+//          thẻ gói của `GetPlanOverview` và `(Field 1, Field 2, Field 3)` cho thẻ gói
+//          của `GetShowValuePlanOverview`.
+//   3. Sửa mở khóa trang `Chất lượng nội dung nghe nhìn` (`Rất cao` / `Very High`):
+//      - Trong `patchAttributes`: giữ đúng field number gốc của server (`field 2` bool,
+//        `field 3` long, `field 4` string) khi ghi đè `"high-bitrate"`, `"offline"`,
+//        đồng thời xóa `"streaming-max-quality"`, `"max-bitrate"`, `"bitrate-cap"`
+//        và mọi attribute Free có chứa `upsell|capping|timecap|disallow|restrict`.
 // ============================================================================
 
 (function () {
@@ -216,12 +212,15 @@
     typeof opt.badge_color === "string" && opt.badge_color ? opt.badge_color : "#1ED760";
   const BADGE_TEXT_COLOR =
     typeof opt.badge_text_color === "string" ? opt.badge_text_color : "#121212";
+  // Tên gói chữ to trong trang Quản lý gói đăng ký / Gói Premium của bạn
+  // (mặc định "Individual" như Ảnh 5 & Ảnh 7 của nick Premium thật; có thể đặt qua $argument {"plan_tier_text":"ToCam"}).
+  const PLAN_TIER_TEXT =
+    typeof opt.plan_tier_text === "string" && opt.plan_tier_text ? opt.plan_tier_text : "Individual";
 
   const isGetYourPremiumBadge = /GetYourPremiumBadge/i.test(url);
+  const isGetPlanOverview = /GetPlanOverview/i.test(url);
+  const isGetShowValuePlanOverview = /GetShowValuePlanOverview/i.test(url);
 
-  // Trường hợp đặc biệt: trên tài khoản Free, nếu GetYourPremiumBadge trả về
-  // body rỗng 0 byte (HTTP 200 Content-Length: 0), ta vẫn cần kiểm tra:
-  // nếu !body || !body.length mà KHÔNG phải GetYourPremiumBadge thì thoát ngay.
   if (!body || !ArrayBuffer.isView(body) || (!body.length && !isGetYourPremiumBadge)) {
     $done({});
     return;
@@ -339,13 +338,30 @@
   const fieldBytes = (no, payload) => ({ no: no, w: 2, p: payload });
   const fieldVarint = (no, value) => ({ no: no, w: 0, v: value });
 
-  function text(f) {
-    if (!f || f.w !== 2) return null;
+  function decodeUtf8(bytes) {
     try {
-      return TD.decode(f.p);
+      return TD.decode(bytes);
     } catch (e) {
       return null;
     }
+  }
+
+  function text(f) {
+    if (!f || f.w !== 2) return null;
+    return decodeUtf8(f.p);
+  }
+
+  // v2.6.1: Phân biệt tuyệt đối một chuỗi văn bản hiển thị (không có bất kỳ
+  // control byte nào `< 0x20` hay `0x7f`) với một submessage protobuf.
+  // Lý do: chuỗi `"Premium"` (`50 72 65 6d 69 75 6d`) nếu đưa vào `parse()` sẽ
+  // bị nhận nhầm thành `[{no:10,w:0,v:114},{no:12,w:5,p:"mium"}]`!
+  function asPrintableString(bytes) {
+    if (!bytes || !bytes.length || bytes.length > 256) return null;
+    for (let i = 0; i < bytes.length; i++) {
+      const b = bytes[i];
+      if (b < 0x20 || b === 0x7f) return null;
+    }
+    return decodeUtf8(bytes);
   }
 
   function edit(message, path, fn) {
@@ -654,10 +670,6 @@
 
   const yearOn = new Date(Date.now() + 365 * 86400000).toISOString().replace(/\.\d{3}Z$/, "Z");
 
-  // v2.6: bổ sung "offline": true, "unlimited-skips": true, "unlimited_skips": true,
-  // "shuffle": false, "ad-catalogues": "" để trang Media Quality (Chất lượng phát
-  // trực tuyến & Chất lượng tải xuống) trên Spotify iOS 9.2.x nhận diện đủ quyền
-  // mở khóa dòng "Rất cao" (Very High).
   const ATTR_CORE = {
     "catalogue": "premium",
     "product": "premium",
@@ -689,6 +701,7 @@
     "enable-crossfade-product-state": "1",
     "enable-gapless-product-state": "1",
     "high-bitrate": true,
+    "audio-quality": "1",
     "loudness-levels": "1:-5.0,0.0,3.0:-2.0",
     "mixing-tools": "EDIT",
     "your-library-tags": true,
@@ -722,18 +735,39 @@
     "capper-profile",
     "capping-id",
     "pause-after",
-    "disallow-seeking"
+    "disallow-seeking",
+    "streaming-max-quality",
+    "max-bitrate",
+    "bitrate-cap"
   ];
 
   const forced = Object.assign({}, ATTR_CORE, adsOn ? ATTR_ADS : {});
   const has = (key) => Object.prototype.hasOwnProperty.call(forced, key);
   const stripped = (key) => {
     if (key.indexOf("is-premium-eligible") === 0) return true;
+    if (/(?:upsell|capping|timecap|disallow|restrict)/i.test(key)) return true;
     if (!adsOn && key.indexOf("ad") === 0) return false;
     return STRIPPED.indexOf(key) >= 0;
   };
 
-  const attributeEntry = (key, value) => {
+  const attributeEntry = (key, value, existingValMsg) => {
+    // Nếu server đã gửi sẵn entry này, kiểm tra xem server đang dùng field số mấy
+    // (2 = bool_value, 3 = long_value, 4 = string_value) để ghi đè đúng kiểu wire
+    // mà client mong đợi!
+    if (existingValMsg && existingValMsg.w === 2 && existingValMsg.p && existingValMsg.p.length) {
+      const vf = parse(existingValMsg.p);
+      if (vf && vf.length === 1 && typeof value === "boolean") {
+        const only = vf[0];
+        if (only.no === 3 && only.w === 0) {
+          return fieldBytes(1, serialize([fieldString(1, key), fieldBytes(2, serialize([fieldVarint(3, value ? 1 : 0)]))]));
+        }
+        if (only.no === 4 && only.w === 2) {
+          const oldStr = text(only) || "";
+          const newStr = /^(?:true|false)$/i.test(oldStr) ? (value ? "true" : "false") : (value ? "1" : "0");
+          return fieldBytes(1, serialize([fieldString(1, key), fieldBytes(2, serialize([fieldString(4, newStr)]))]));
+        }
+      }
+    }
     const inner = typeof value === "string" ? fieldString(4, value) : fieldVarint(2, value ? 1 : 0);
     return fieldBytes(1, serialize([fieldString(1, key), fieldBytes(2, serialize([inner]))]));
   };
@@ -745,9 +779,13 @@
     const seen = Object.create(null);
     for (const f of fields) {
       let key = null;
+      let existingVal = null;
       if (f.no === 1 && f.w === 2) {
         const inner = parse(f.p);
-        if (inner) key = text(first(inner, 1));
+        if (inner) {
+          key = text(first(inner, 1));
+          existingVal = first(inner, 2);
+        }
       }
       if (!key || (!has(key) && !stripped(key))) {
         out.push(f);
@@ -755,9 +793,9 @@
       }
       if (!has(key)) continue;
       seen[key] = true;
-      out.push(attributeEntry(key, forced[key]));
+      out.push(attributeEntry(key, forced[key], existingVal));
     }
-    for (const key in forced) if (!seen[key]) out.push(attributeEntry(key, forced[key]));
+    for (const key in forced) if (!seen[key]) out.push(attributeEntry(key, forced[key], null));
     return serialize(out);
   }
 
@@ -780,11 +818,10 @@
     return patchAttributes(buffer);
   }
 
-  // v2.6: Tìm và patch AccountAttributes ngay cả khi /nebula bọc nó trong 1..3 lớp
-  // submessage ngoài (tránh rơi về patchUniversal làm mất ATTR_CORE như high-bitrate/offline).
   function patchAttributesDeep(buffer, depth = 0) {
     if (recognizedAttributes(buffer)) return patchAttributes(buffer);
     if (depth >= 3) return null;
+    if (asPrintableString(buffer) !== null) return null;
     const fields = parse(buffer);
     if (!fields || !fields.length) return null;
     let changed = false;
@@ -851,9 +888,6 @@
       }
       if (removed) continue;
 
-      // v2.6: Nếu là cờ mới trong ios-settings-mediaqualitypageplugin-impl hoặc
-      // bất kỳ cờ upsell nào chưa có trong RULES cứng mà đang mang BoolValue ->
-      // tự động gạt về false để không khóa dòng "Rất cao" (Very High).
       if (!matchedRule && adsOn && first(value, 3)) {
         const isMediaQualityGate =
           /mediaquality|audioquality/i.test(scope) &&
@@ -904,6 +938,7 @@
   function patchConfigurationDeep(buffer, depth = 0) {
     if (recognizedConfiguration(buffer)) return patchConfiguration(buffer);
     if (depth >= 3) return null;
+    if (asPrintableString(buffer) !== null) return null;
     const fields = parse(buffer);
     if (!fields || !fields.length) return null;
     let changed = false;
@@ -961,21 +996,15 @@
     "spotify free": "Spotify Premium",
     "Free account": "Premium account",
     "free_account": "premium",
-    "FREE_ACCOUNT": "PREMIUM"
+    "FREE_ACCOUNT": "PREMIUM",
+    "1 tài khoản Free": "1 tài khoản Premium",
+    "1 tài khoản Spotify Free": "1 tài khoản Premium"
   };
 
   const PRODUCT_KEY = /^(?:product|product_?state|product_?type|product_?name|product_?id|plan|plan_?type|plan_?name|plan_?title|account_?type|account_?plan|account_?tier|subscription|subscription_?type|subscription_?plan|subscription_?name|tier|sub_?tier|catalogue|catalog|product_?catalogue|membership|membership_?type|pricing_?plan|product_?level|badge|badge_?type|current_?plan|plan_?title|type)$/i;
   const PREMIUM_FLAG_KEY = /^(?:is_?premium|is_?premium_?user|is_?premium_?account|premium|premium_?user|has_?premium|is_?subscribed|subscribed|is_?paid|paid_?user)$/i;
   const AD_FLAG_KEY = /^(?:ads|has_?ads|show_?ads|is_?ad_?supported|ad_?supported|ads_?enabled)$/i;
   const SPOTIFY_FREE_LITERAL = /^\s*spotify[\s_-]*free\s*$/i;
-
-  function decodeUtf8(bytes) {
-    try {
-      return TD.decode(bytes);
-    } catch (e) {
-      return null;
-    }
-  }
 
   function patchJsonProduct(str) {
     let root;
@@ -1021,11 +1050,25 @@
     return changed ? JSON.stringify(root) : null;
   }
 
+  // v2.6.1: Kiểm tra `asPrintableString(f.p)` TRƯỚC khi gọi `parse(f.p)` để không
+  // bao giờ parse nhầm một chuỗi văn bản thuần túy thành submessage protobuf!
   function rewriteStrings(fields, depth) {
     if (depth > 8) return false;
     let changed = false;
     for (const f of fields) {
       if (f.w !== 2 || !f.p || !f.p.length) continue;
+
+      if (f.p.length <= 64) {
+        const s = asPrintableString(f.p);
+        if (s !== null) {
+          const rep = FREE_MAP[s];
+          if (rep && rep !== s) {
+            f.p = TE.encode(rep);
+            changed = true;
+          }
+          continue;
+        }
+      }
 
       if (f.p.length > 1) {
         const inner = parse(f.p);
@@ -1034,17 +1077,7 @@
             f.p = serialize(inner);
             changed = true;
           }
-          continue;
         }
-      }
-
-      if (f.p.length > 64) continue;
-      const s = decodeUtf8(f.p);
-      if (s === null) continue;
-      const rep = FREE_MAP[s];
-      if (rep && rep !== s) {
-        f.p = TE.encode(rep);
-        changed = true;
       }
     }
     return changed;
@@ -1071,25 +1104,7 @@
   const patchCustomize = (b) => edit(b, [1], patchUcs);
   const patchBootstrap = (b) => edit(b, [2, 1, 1, 1], patchUcs);
 
-  // ------------------------------------------------------- PAM & Badge (v2.6.0)
-  //
-  // Bằng chứng từ ảnh bắt gói của tài khoản CÓ Premium thật:
-  //   [QUAN LY GOI] spotify.pam.v2.PamViewService/GetYourPremiumBadge
-  //   HTTP 200 · proto · 23B -> `#1ED760 · Individual`
-  //
-  // Vì sao bản v2.5 trên máy tài khoản Free vẫn hiện XÁM và chữ "Spotify Premium":
-  //   1) Tài khoản Free trả về chữ "Spotify Free" (hoặc "Free") + mã màu xám
-  //      (như #535353, #727272, #7F7F7F, #282828...) và/hoặc varint style = 0.
-  //   2) Trong v2.5, `patchBadgeStrings` chạy TRƯỚC `rewriteStrings`, mà
-  //      `BADGE_ONLY` chỉ khớp "Premium" / "Spotify Premium" (không khớp
-  //      "Free" / "Spotify Free"). Sau đó `rewriteStrings` chạy và biến
-  //      "Spotify Free" -> "Spotify Premium"!
-  //   3) Hàm `recolor` trong v2.5 chỉ tìm `GREEN_HEX` để thay, hoàn toàn BỎ QUA
-  //      mã màu xám trong protobuf!
-  //   4) Vì `rewriteStrings` đã làm `changed = true`, `patchPam` thoát ngay ở
-  //      `if (changed) return serialize(fields)` mà không bao giờ nâng varint
-  //      enum `0 -> 1` (và `boostEnum` cũ cũng từ chối chạy nếu message có
-  //      chứa field string).
+  // ------------------------------------------------------- PAM & Badge (v2.6.1)
 
   function boostEnum(b) {
     if (!b.length || b.length > 64) return null;
@@ -1106,10 +1121,10 @@
     return changed ? serialize(fields) : null;
   }
 
-  // v2.6: Nâng mọi field varint `0 -> 1` trong message PAM ngay cả khi đi kèm
-  // field string (ví dụ gói 23B của GetYourPremiumBadge có cả varint lẫn string).
+  // Chỉ dùng cho GetYourPremiumBadge (message nhỏ <= 64B), KHÔNG chạy trên
+  // GetPlanOverview (944B) hay GetShowValuePlanOverview (1837B)!
   function boostPamEnums(fields, depth) {
-    if (depth > 6) return false;
+    if (depth > 4) return false;
     let changed = false;
     for (const f of fields) {
       if (f.w === 0) {
@@ -1117,7 +1132,7 @@
           f.v = 1;
           changed = true;
         }
-      } else if (f.w === 2 && f.p && f.p.length > 1) {
+      } else if (f.w === 2 && f.p && f.p.length > 1 && asPrintableString(f.p) === null) {
         const inner = parse(f.p);
         if (inner && inner.length && boostPamEnums(inner, depth + 1)) {
           f.p = serialize(inner);
@@ -1138,7 +1153,6 @@
   const STYLE_KEY = /^(?:style|badge_?style|pill_?style|type|badge_?type)$/i;
   const PLAN_WORD = /^(?:(?:spotify\s*[_-]?\s*)?(?:premium|free)(?:\s*plan|\s*tier|\s*account)?|individual|student|duo|family|mini)$/i;
   const PREMIUM_WORD = /^(?:(?:spotify\s*[_-]?\s*)?premium|individual)$/i;
-  // v2.6: BADGE_ONLY khớp cả Free / Spotify Free / Premium / Spotify Premium / Individual
   const BADGE_ONLY =
     /^(?:(?:spotify\s*[_-]?\s*)?(?:premium|free)(?:\s*plan|\s*tier|\s*account)?|individual|premium\s*individual)$/i;
 
@@ -1148,9 +1162,11 @@
   const GREY_HEX =
     /#?(?:535353|6a6a6a|727272|757575|7f7f7f|808080|8e8e93|282828|242424|1f1f1f|2a2a2a|333333|3e3e3e|484848|5e5e5e|b3b3b3|121212|404040|a0a0a0|a7a7a7|666666|999999|c4c4c4|cccccc|d9d9d9|e0e0e0|grey|gray)/i;
   const GREY_HEX_REPLACE =
-    /#(?:535353|6a6a6a|727272|757575|7f7f7f|808080|8e8e93|282828|242424|1f1f1f|2a2a2a|333333|3e3e3e|404040|484848|5e5e5e|666666|999999|a0a0a0|a7a7a7|b3b3b3|c4c4c4|cccccc|d9d9d9|e0e0e0)\b/gi;
+    /#(?:535353|6a6a6a|727272|757575|7f7f7f|808080|8e8e93|333333|3e3e3e|404040|484848|5e5e5e|666666|999999|a0a0a0|a7a7a7|b3b3b3|c4c4c4|cccccc|d9d9d9|e0e0e0)\b/gi;
+  const GREY_BARE_EXACT =
+    /^(?:535353|6a6a6a|727272|757575|7f7f7f|808080|8e8e93|333333|3e3e3e|404040|484848|5e5e5e|666666|999999|a0a0a0|a7a7a7|b3b3b3)$/i;
   const GREY_RGB =
-    /rgba?\(\s*(?:83|106|114|117|127|128|142|40|36|31|42|51|62|72|94|179|18|64|102|153|160|167|196|204)\s*,\s*(?:83|106|114|117|127|128|142|40|36|31|42|51|62|72|94|179|18|64|102|153|160|167|196|204)\s*,\s*(?:83|106|114|117|127|128|142|40|36|31|42|51|62|72|94|179|18|64|102|153|160|167|196|204)\s*(?:,\s*[\d.]+\s*)?\)/gi;
+    /rgba?\(\s*(?:83|106|114|117|127|128|142|51|62|72|94|179|64|102|153|160|167|196|204)\s*,\s*(?:83|106|114|117|127|128|142|51|62|72|94|179|64|102|153|160|167|196|204)\s*,\s*(?:83|106|114|117|127|128|142|51|62|72|94|179|64|102|153|160|167|196|204)\s*(?:,\s*[\d.]+\s*)?\)/gi;
   const VI_FREE_TITLE = /^\s*gói\s*của\s*bạn\s*$/i;
   const EN_FREE_TITLE = /^\s*your\s*plan\s*$/i;
   const BADGE_HEX_BARE = BADGE_COLOR.replace(/^#/, "");
@@ -1171,17 +1187,17 @@
       .replace(GREEN_RGB, () => BADGE_RGB);
   }
 
-  // v2.6: Trong protobuf của PAM (GetYourPremiumBadge / GetPlanOverview),
-  // mã màu của tài khoản Free là màu XÁM (ví dụ #535353, #7F7F7F, #282828...).
-  // `recolorPam` đổi mọi mã màu xám và mã màu `#RRGGBB` của viên badge sang `BADGE_COLOR` (#1ED760).
   function recolorPam(str) {
     if (!str || str.length > 80) return str;
     const t = str.trim();
-    // Nếu cả chuỗi là 1 mã màu hex `#RRGGBB` (đúng như `#1ED760` 7B trong gói 23B của Premium thật):
     if (/^#[0-9a-f]{6}$/i.test(t)) {
-      if (BADGE_TEXT_COLOR && t.toLowerCase() === BADGE_TEXT_COLOR.toLowerCase()) return str;
-      if (t.toLowerCase() === "#000000") return str;
+      const low = t.toLowerCase();
+      if (BADGE_TEXT_COLOR && low === BADGE_TEXT_COLOR.toLowerCase()) return str;
+      if (low === "#000000" || low === "#ffffff" || low === "#121212") return str;
       return BADGE_COLOR;
+    }
+    if (GREY_BARE_EXACT.test(t)) {
+      return BADGE_HEX_BARE;
     }
     if (/^0x(?:ff)?[0-9a-f]{6}$/i.test(t)) {
       return "0x" + BADGE_HEX_BARE.toUpperCase();
@@ -1263,10 +1279,8 @@
     for (const f of fields) {
       if (f.w !== 2 || !f.p || !f.p.length) continue;
       if (f.p.length <= 64) {
-        const s = decodeUtf8(f.p);
-        // Chỉ coi là chuỗi hiển thị nếu không chứa control char (< 0x20, trừ \t\n\r)
-        // để tránh nhầm một submessage protobuf ngắn (như \x0a\x07#1ED760) là chuỗi.
-        if (s !== null && !/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(s)) {
+        const s = asPrintableString(f.p);
+        if (s !== null) {
           let nv = s;
           if (BADGE_ONLY.test(s.trim())) nv = BADGE_TEXT;
           else if (VI_FREE_TITLE.test(s)) nv = "Gói Premium của bạn";
@@ -1275,8 +1289,8 @@
           if (nv !== s) {
             f.p = TE.encode(nv);
             changed = true;
-            continue;
           }
+          continue;
         }
       }
       const inner = parse(f.p);
@@ -1290,10 +1304,6 @@
     return changed;
   }
 
-  // Kiểm tra xem trong cây protobuf của GetYourPremiumBadge đã có chuỗi mã màu
-  // (`#RRGGBB`) chưa; nếu server trên tài khoản Free chỉ trả về field chữ mà
-  // omit field màu (khiến app vẽ badge màu xám mặc định), tự động bổ sung field
-  // màu `#1ED760` vào đúng message chứa chữ badge.
   function ensureBadgeColorField(fields, depth = 0) {
     if (depth > 4) return false;
     let hasText = false;
@@ -1301,13 +1311,13 @@
     let hasColor = false;
     for (const f of fields) {
       if (f.w !== 2 || !f.p || !f.p.length) continue;
-      const s = decodeUtf8(f.p);
-      if (s !== null && !/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(s)) {
+      const s = asPrintableString(f.p);
+      if (s !== null) {
         const t = s.trim();
         if (t === BADGE_TEXT || BADGE_ONLY.test(t)) {
           hasText = true;
           textFieldNo = f.no;
-        } else if (/^#[0-9a-f]{6}$/i.test(t) || /^rgba?\(/i.test(t)) {
+        } else if (/^#?[0-9a-f]{6}$/i.test(t) || /^rgba?\(/i.test(t)) {
           hasColor = true;
         }
         continue;
@@ -1319,13 +1329,154 @@
       }
     }
     if (hasText && !hasColor) {
-      const colorNo = textFieldNo === 1 ? 2 : textFieldNo === 2 ? 3 : 2;
+      const colorNo = textFieldNo === 1 ? 3 : textFieldNo === 2 ? 3 : 2;
       if (!first(fields, colorNo)) {
+        if (textFieldNo === 1 && !first(fields, 2)) {
+          fields.push(fieldVarint(2, 2));
+        }
         fields.push(fieldString(colorNo, BADGE_COLOR));
         return true;
       }
     }
     return false;
+  }
+
+  // ------------------------------------ GetPlanOverview & GetShowValuePlanOverview (v2.6.1)
+  //
+  // Giải mã từ Ảnh 10 (`GetPlanOverview` 944B) và Ảnh 15 (`GetShowValuePlanOverview` 1837B):
+  //   * `GetPlanOverview` (trang Quản lý gói đăng ký - Ảnh 5):
+  //     Submessage thẻ gói có:
+  //       Field 3 (0x1a): "Premium Individual" (trên nick Free là "Spotify Free")
+  //       Field 4 (0x22 = `"`): "Individual"   (chữ TO màu xanh trên thẻ; nick Free thiếu field này!)
+  //       Field 5 (0x2a = `*`): "#1ED760"      (mã màu xanh CÓ dấu `#`)
+  //   * `GetShowValuePlanOverview` (trang Gói Premium của bạn - Ảnh 7):
+  //       Field 1 (0x0a): "Premium Individual" (trên nick Free là "Spotify Free")
+  //       Field 2 (0x12): "Individual"         (chữ TO trên thẻ xanh cổ vịt; nick Free thiếu field này!)
+  //       Field 3 (0x1a): "1ED760"             (mã màu xanh KHÔNG CÓ dấu `#`, ngay sau là tag 0x22 `"`)
+  //
+  // Nguyên tắc:
+  //   1) TUYỆT ĐỐI KHÔNG chạy `boostPamEnums` trên 2 endpoint này (giữ nguyên mọi varint `0`
+  //      của các component UI khác để thẻ không bị ẩn mất chữ).
+  //   2) Không đổi chữ `"Premium"` thành `"ToCam"` trong 2 trang này để giữ nguyên header
+  //      `[logo Spotify] Premium`.
+  //   3) Tự động bù Field 4 + Field 5 (cho GetPlanOverview) hoặc Field 2 + Field 3
+  //      (cho GetShowValuePlanOverview) khi phát hiện submessage thẻ gói chứa `"Spotify Free"`.
+
+  const FREE_PLAN_NAME_RE = /^\s*(?:spotify\s*[_-]?\s*free|free\s*plan|gói\s*free)\s*$/i;
+
+  function patchPlanOverviewTree(fields, isShowValue, depth) {
+    if (depth > 8) return false;
+    let changed = false;
+
+    // Kiểm tra xem message `fields` hiện tại có phải là Submessage Thẻ Gói Đăng Ký không:
+    for (let idx = 0; idx < fields.length; idx++) {
+      const f = fields[idx];
+      if (f.w !== 2 || !f.p || !f.p.length || f.p.length > 64) continue;
+      const s = asPrintableString(f.p);
+      if (s === null) continue;
+      const ts = s.trim();
+
+      // Layout GetPlanOverview (Ảnh 10): Field 3 = "Spotify Free" -> "Premium Individual",
+      // kèm Field 4 = "Individual" và Field 5 = "#1ED760"
+      if (!isShowValue && f.no === 3 && FREE_PLAN_NAME_RE.test(ts)) {
+        f.p = TE.encode("Premium Individual");
+        changed = true;
+        const f4 = first(fields, 4);
+        const f5 = first(fields, 5);
+        const toInsert = [];
+        if (!f4) {
+          toInsert.push(fieldString(4, PLAN_TIER_TEXT));
+        } else if (f4.w === 2 && asPrintableString(f4.p) !== null) {
+          f4.p = TE.encode(PLAN_TIER_TEXT);
+        }
+        if (!f5) {
+          toInsert.push(fieldString(5, BADGE_COLOR));
+        } else if (f5.w === 2 && asPrintableString(f5.p) !== null) {
+          const c5 = asPrintableString(f5.p).trim();
+          f5.p = TE.encode(c5.charAt(0) === "#" ? BADGE_COLOR : BADGE_HEX_BARE);
+        }
+        if (toInsert.length) {
+          fields.splice(idx + 1, 0, ...toInsert);
+          idx += toInsert.length;
+        }
+        // Nâng varint tier 1 (FREE) -> 2 (INDIVIDUAL) chỉ trong submessage thẻ gói này
+        for (const vf of fields) {
+          if ((vf.no === 1 || vf.no === 2) && vf.w === 0 && vf.v === 1) {
+            vf.v = 2;
+          }
+        }
+        continue;
+      }
+
+      // Layout GetShowValuePlanOverview (Ảnh 15): Field 1 = "Spotify Free" -> "Premium Individual",
+      // kèm Field 2 = "Individual" và Field 3 = "1ED760" (không dấu #)
+      if (isShowValue && f.no === 1 && FREE_PLAN_NAME_RE.test(ts)) {
+        f.p = TE.encode("Premium Individual");
+        changed = true;
+        const f2 = first(fields, 2);
+        const f3 = first(fields, 3);
+        const toInsert = [];
+        if (!f2) {
+          toInsert.push(fieldString(2, PLAN_TIER_TEXT));
+        } else if (f2.w === 2 && asPrintableString(f2.p) !== null && /^(?:free|spotify\s*free)$/i.test(asPrintableString(f2.p).trim())) {
+          f2.p = TE.encode(PLAN_TIER_TEXT);
+        }
+        if (!f3) {
+          toInsert.push(fieldString(3, BADGE_HEX_BARE));
+        } else if (f3.w === 2 && asPrintableString(f3.p) !== null) {
+          const c3 = asPrintableString(f3.p).trim();
+          if (/^#?[0-9a-f]{6}$/i.test(c3)) {
+            f3.p = TE.encode(c3.charAt(0) === "#" ? BADGE_COLOR : BADGE_HEX_BARE);
+          }
+        }
+        if (toInsert.length) {
+          fields.splice(idx + 1, 0, ...toInsert);
+          idx += toInsert.length;
+        }
+        continue;
+      }
+    }
+
+    for (const f of fields) {
+      if (f.w !== 2 || !f.p || !f.p.length) continue;
+
+      if (f.p.length <= 160) {
+        const s = asPrintableString(f.p);
+        if (s !== null) {
+          let nv = s;
+          if (VI_FREE_TITLE.test(s)) nv = "Gói Premium của bạn";
+          else if (EN_FREE_TITLE.test(s)) nv = "Your Premium plan";
+          else if (FREE_PLAN_NAME_RE.test(s)) nv = "Spotify Premium";
+          else if (Object.prototype.hasOwnProperty.call(FREE_MAP, s)) nv = FREE_MAP[s];
+          else if (/1\s*tài\s*khoản\s*(?:spotify\s*)?free/i.test(s)) {
+            nv = s.replace(/(?:spotify\s*)?free/i, "Premium");
+          } else if (/gói\s*(?:spotify\s*)?free/i.test(s)) {
+            nv = s.replace(/(?:spotify\s*)?free/i, "Premium");
+          } else if (GREY_BARE_EXACT.test(s.trim())) {
+            nv = BADGE_HEX_BARE;
+          } else {
+            nv = nv.replace(GREY_HEX_REPLACE, () => BADGE_COLOR);
+            nv = recolor(nv);
+          }
+          if (nv !== s) {
+            f.p = TE.encode(nv);
+            changed = true;
+          }
+          continue;
+        }
+      }
+
+      if (f.p.length > 1) {
+        const inner = parse(f.p);
+        if (inner && inner.length) {
+          if (patchPlanOverviewTree(inner, isShowValue, depth + 1)) {
+            f.p = serialize(inner);
+            changed = true;
+          }
+        }
+      }
+    }
+    return changed;
   }
 
   function patchPam(b) {
@@ -1335,14 +1486,24 @@
       const j = patchJsonAll(s);
       return j ? TE.encode(j) : null;
     }
-    // Nếu trên tài khoản Free, GetYourPremiumBadge trả về 0 byte (rỗng):
-    // Dựng message 23B chuẩn của tài khoản Premium thật:
-    // field 1 varint = 1 (2B), field 2 string = BADGE_TEXT, field 3 string = BADGE_COLOR (#1ED760).
+
+    // Nhánh 1: Trang Gói Premium của bạn (GetShowValuePlanOverview) & Quản lý gói đăng ký (GetPlanOverview)
+    if (isGetPlanOverview || isGetShowValuePlanOverview) {
+      if (!b.length) return null;
+      const fields = parse(b);
+      if (!fields || !fields.length) return null;
+      if (patchPlanOverviewTree(fields, isGetShowValuePlanOverview, 0)) {
+        return serialize(fields);
+      }
+      return null;
+    }
+
+    // Nhánh 2: GetYourPremiumBadge (23B: 0a <len> ToCam 10 02 1a 07 #1ED760)
     if (!b.length) {
       if (isGetYourPremiumBadge) {
         return serialize([
-          fieldVarint(1, 1),
-          fieldString(2, BADGE_TEXT),
+          fieldString(1, BADGE_TEXT),
+          fieldVarint(2, 2),
           fieldString(3, BADGE_COLOR)
         ]);
       }
@@ -1351,13 +1512,9 @@
     const fields = parse(b);
     if (!fields || !fields.length) return null;
     let changed = false;
-    // v2.6: Chạy rewriteStrings TRƯỚC rồi mới chạy patchBadgeStrings để
-    // "Spotify Free" -> "Spotify Premium" -> BADGE_TEXT ("ToCam"), không còn
-    // bị kẹt ở chữ "Spotify Premium" như v2.5!
     if (rewriteStrings(fields, 0)) changed = true;
     if (patchBadgeStrings(fields, 0)) changed = true;
-    // Luôn nâng cả varint enum 0 -> 1 trong PAM (kể cả khi message có cả string lẫn varint).
-    if (boostPamEnums(fields, 0)) changed = true;
+    if (b.length <= 64 && boostPamEnums(fields, 0)) changed = true;
     if (isGetYourPremiumBadge && ensureBadgeColorField(fields, 0)) changed = true;
     if (changed) return serialize(fields);
     return boostEnum(b);
@@ -1406,22 +1563,23 @@
     let changed = false;
     for (const f of fields) {
       if (f.w !== 2 || !f.p || !f.p.length) continue;
+      if (asPrintableString(f.p) !== null) continue;
       const inner = parse(f.p);
       if (!inner || !inner.length) continue;
       let local = unlockPairs(inner, depth + 1);
       const kf = first(inner, 1);
       const vf = first(inner, 2);
-      const ks = kf ? text(kf) : null;
-      if (ks && ks.length <= 64 && !/[\x00-\x1f]/.test(ks) && vf && LOCK_KEY.test(ks)) {
+      const ks = kf && kf.w === 2 ? asPrintableString(kf.p) : null;
+      if (ks && ks.length <= 64 && vf && LOCK_KEY.test(ks)) {
         if (vf.w === 0 && vf.v === 1) {
           vf.v = 0;
           local = true;
         } else if (vf.w === 2 && vf.p && vf.p.length) {
-          const sv = text(vf);
+          const sv = asPrintableString(vf.p);
           if (sv === "true" || sv === "TRUE") {
             vf.p = TE.encode("false");
             local = true;
-          } else {
+          } else if (sv === null) {
             const vv = parse(vf.p);
             if (vv && vv.length) {
               let sub = false;
@@ -1461,7 +1619,7 @@
     return new Uint8Array(0);
   }
 
-  // --------------------------------------------- playback settings & quality (v2.6.0)
+  // --------------------------------------------- playback settings & quality (v2.6.1)
 
   const QUALITY_KEY =
     /(?:quality|bitrate|bit_?rate|max_?bitrate|streaming_?level|audio_?format|streaming_?quality|download_?quality|preferred_?quality|audio_?quality)/i;
@@ -1497,30 +1655,19 @@
     return s.trim().replace(/[0-9]{2,3}$/, "320");
   }
 
-  // v2.6: Sửa lỗi `setQualityPairs` ghi đè `TE.encode("VERY_HIGH")` lên một
-  // submessage protobuf (ví dụ `ContentValue { int32 val = 1; }` -> `\x08\x02`),
-  // làm hỏng wire format của `playback-settings`.
-  // Giờ kiểm tra chặt:
-  //   - Nếu `v.w === 0` (varint trong cặp `{1: quality_key, 2: varint}`):
-  //     + nếu `v.v` là bitrate thấp (96, 160 hoặc trong BITRATE_LOW) -> nâng lên 320 / 320000
-  //     + nếu `1 <= v.v <= 3` (enum LOW=1, NORMAL=2, HIGH=3) -> nâng lên 4 (VERY_HIGH)
-  //   - Nếu `v.w === 2`:
-  //     + chỉ ghi đè `v.p = TE.encode("VERY_HIGH")` khi `vs` là chuỗi ASCII in được
-  //       (`^[\x20-\x7e]+$`) và không phải là submessage chứa control bytes.
-  //     + nếu `v.p` là một submessage (`parse(v.p)` hợp lệ và có control bytes):
-  //       đi vào bên trong submessage đó để nâng quality string / varint enum / bitrate!
   function setQualityPairs(fields, depth) {
     if (depth > 6) return false;
     let changed = false;
     for (const f of fields) {
       if (f.w !== 2 || !f.p || !f.p.length) continue;
+      if (asPrintableString(f.p) !== null) continue;
       const inner = parse(f.p);
       if (!inner || !inner.length) continue;
       let local = setQualityPairs(inner, depth + 1);
       const k = first(inner, 1);
       const v = first(inner, 2);
-      const ks = k ? text(k) : null;
-      if (ks && !/[\x00-\x1f]/.test(ks) && v && QUALITY_KEY.test(ks)) {
+      const ks = k && k.w === 2 ? asPrintableString(k.p) : null;
+      if (ks && v && QUALITY_KEY.test(ks)) {
         if (v.w === 0) {
           if (BITRATE_LOW.indexOf(v.v) >= 0) {
             v.v = BITRATE_MAX;
@@ -1533,13 +1680,13 @@
             local = true;
           }
         } else if (v.w === 2 && v.p && v.p.length) {
-          const vs = text(v);
-          if (vs !== null && /^[\x20-\x7e]+$/.test(vs) && vs.length <= 32) {
+          const vs = asPrintableString(v.p);
+          if (vs !== null && vs.length <= 32) {
             if (vs !== QUALITY_MAX) {
               v.p = TE.encode(QUALITY_MAX);
               local = true;
             }
-          } else {
+          } else if (vs === null) {
             const sub = parse(v.p);
             if (sub && sub.length) {
               let subChanged = false;
@@ -1656,8 +1803,8 @@
       }
       if (f.w !== 2 || !f.p || !f.p.length) continue;
       if (f.p.length <= 48) {
-        const s = decodeUtf8(f.p);
-        if (s !== null && /^[\x20-\x7e]+$/.test(s)) {
+        const s = asPrintableString(f.p);
+        if (s !== null) {
           const nx = bumpFormatString(s);
           if (nx && nx !== s) {
             f.p = TE.encode(nx);
@@ -1787,8 +1934,8 @@
       }
       if (f.w !== 2 || !f.p || !f.p.length) continue;
       if (f.p.length <= 48) {
-        const s = decodeUtf8(f.p);
-        if (s !== null && /^[\x20-\x7e]+$/.test(s)) {
+        const s = asPrintableString(f.p);
+        if (s !== null) {
           const up = s.trim().toUpperCase();
           if (QUALITY_WORDS.test(up) && up !== QUALITY_MAX) {
             f.p = TE.encode(QUALITY_MAX);
@@ -1890,7 +2037,7 @@
 
   // ------------------------------------------------------------------- entry
 
-  const isPam = /(?:pam-view-service|pam\.v2|PamViewService|pam-account|GetYourPremiumBadge|GetPlanOverview|GetPremiumPlanRow)/i.test(url);
+  const isPam = /(?:pam-view-service|pam\.v2|PamViewService|pam-account|GetYourPremiumBadge|GetPlanOverview|GetShowValuePlanOverview|GetPremiumPlanRow)/i.test(url);
   const isRestrict = /(?:clientrestrictions|GetRestrictedIntegrations)/i.test(url);
   const isSettings = /(?:playback-settings|media-quality|audio-attributes)/i.test(url);
   const isFortune = /net-fortune/i.test(url);
@@ -1938,8 +2085,6 @@
     console.log("spotify-vn-v26: patched " + pth.slice(0, 70) + " " + body.length + " -> " + out.length + "B");
   }
 
-  // Nếu đầu vào $response.body là string (không có bodyBytes) và kết quả là JSON,
-  // trả lại string cho Shadowrocket để tương thích 100% ở chế độ non-binary.
   if ($response && $response._wasStringBody && out.length && (out[0] === 0x7b || out[0] === 0x5b)) {
     const strOut = decodeUtf8(out);
     if (strOut !== null) {

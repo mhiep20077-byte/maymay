@@ -1,11 +1,6 @@
 // ============================================================================
 // spotify-vn-v26 / scripts/sniff-clean.js
-// Build: 2026-11-25 · v2.6.0 · type: http-request + http-response
-//
-// Module bắt gói tin SẠCH v2.6 cho Shadowrocket:
-//   - Đi kèm binary-body-mode=true + spotify-request.js trong module nên không
-//     còn bị lỗi "Body rong (200)" do 304, gzip hay byte 0x80 của gRPC trailer.
-//   - In cả chuỗi đọc được lẫn mã HEX 24 byte đầu của payload protobuf/gRPC.
+// Build: 2026-11-25 · v2.6.1 · type: http-request + http-response
 // ============================================================================
 
 (function () {
@@ -34,7 +29,7 @@
 
   function detectGroup(p) {
     if (
-      /(?:storage-resolve|net-fortune|device-capabilities|playback|audio|quality|bitrate|ondemand|capability|capabilities|settings)/i.test(
+      /(?:storage-resolve|net-fortune|device-capabilities|playback|audio|quality|bitrate|ondemand|capability|capabilities|settings|offline|capping)/i.test(
         p
       )
     ) {
@@ -48,7 +43,7 @@
       return "QUAN LY GOI";
     }
     if (
-      /(?:bootstrap|user-customization-service|ucs|resolve|nebula|product|profile|attributes|subscription|catalogue|premium|identity|login5|remote-config|tier|entitlement|\/me(?:\/|\?|$))/i.test(
+      /(?:bootstrap|user-customization-service|ucs|resolve|nebula|product|profile|attributes|subscription|catalogue|premium|identity|login5|v3\/login|v4\/login|remote-config|tier|entitlement|\/me(?:\/|\?|$))/i.test(
         p
       )
     ) {
@@ -119,7 +114,7 @@
   }
 
   function toHex(bytes, maxLen) {
-    var n = Math.min(bytes.length, maxLen || 24);
+    var n = Math.min(bytes.length, maxLen || 32);
     var out = "";
     for (var i = 0; i < n; i++) {
       var h = bytes[i].toString(16);
@@ -243,16 +238,14 @@
         otherWords.push(s);
       }
     }
-    summaryParts = hotWords.slice(0, 8).concat(otherWords.slice(0, 3));
-    if (core.length <= 48) {
-      summaryParts.push("hex=" + toHex(core, 24));
-    }
-    rawTextSample = asciiHits.join(" | ").slice(0, 500) + " [hex:" + toHex(core, 32) + "]";
+    summaryParts = hotWords.slice(0, 5).concat(otherWords.slice(0, 2));
+    summaryParts.push("hex=" + toHex(core, 32));
+    rawTextSample = asciiHits.join(" | ").slice(0, 500) + " [hex:" + toHex(core, 64) + "]";
   } else {
     summaryParts.push("Du lieu nen gzip (" + len + "B)");
   }
 
-  var summaryText = summaryParts.length ? summaryParts.join(" · ") : "Binary " + len + "B (hex=" + toHex(core, 16) + ")";
+  var summaryText = summaryParts.length ? summaryParts.join(" · ") : "Binary " + len + "B (hex=" + toHex(core, 24) + ")";
 
   try {
     console.log(
