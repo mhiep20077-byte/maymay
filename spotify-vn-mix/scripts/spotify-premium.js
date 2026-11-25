@@ -2218,6 +2218,86 @@
     return changed ? serialize(fields) : null;
   }
 
+  // ------------------------------- Playlist Mix / Nút Phối (SelectedListContent)
+  //
+  // Bắt được từ log thật trên playlist "Hiệp" (4YvPfs7WpoADAovoaFjRPQ):
+  //   /playlist-v2/v2/playlist/<id>[/signals|/diff] trả về SelectedListContent:
+  //     f1 (w=2): revision bytes (24B)
+  //     f2 (w=0): length (số bài)
+  //     f3 (w=2): PlaylistAttributes {
+  //                 f1 (w=2): tên playlist ("Hiệp")
+  //                 f12 (w=2, repeated): FormatListAttribute { f1: key, f2: value }
+  //               }
+  //     f5 (w=2): ListItems { f1=0, f2=0, f3=repeated Item (kèm 88B signal) }
+  //
+  // Khi nút Phối BẬT (#15, #28):
+  //   f12 = { f1: "can-view-transition", f2: "true" }
+  //   f12 = { f1: "automix.mode",        f2: "auto" }
+  //   f12 = { f1: "mix",                 f2: "true" }
+  //   f12 = { f1: "mix-type",            f2: "allow-custom" }
+  //   f12 = { f1: "automix.queue",       f2: "true" }
+  //
+  // Khi nút Phối TẮT hoặc bị server khoá (#42, #43, #10):
+  //   f12 = { f1: "mix", f2: "false" } (hoặc thiếu 5 cặp f12 trên).
+  const PLAYLIST_MIX_ON = flag(opt.playlist_mix, true);
+  const PLAYLIST_MIX_ATTRS = [
+    ["can-view-transition", "true"],
+    ["automix.mode", "auto"],
+    ["mix", "true"],
+    ["mix-type", "allow-custom"],
+    ["automix.queue", "true"]
+  ];
+
+  function patchPlaylistMix(b) {
+    if (!PLAYLIST_MIX_ON || !b || !b.length) return null;
+    if (b[0] === 0x7b || b[0] === 0x5b) return null;
+    const fields = parse(b);
+    if (!fields || !fields.length) return null;
+    const f1 = first(fields, 1);
+    const f3 = first(fields, 3);
+    if (!f1 || f1.w !== 2 || !f1.p || f1.p.length < 4 || f1.p.length > 64) return null;
+    if (!f3 || f3.w !== 2 || !f3.p || !f3.p.length) return null;
+    const attrFields = parse(f3.p);
+    if (!attrFields || !attrFields.length) return null;
+    const nameField = first(attrFields, 1);
+    if (!nameField || nameField.w !== 2) return null;
+
+    let changed = false;
+    const seen = Object.create(null);
+
+    for (const af of attrFields) {
+      if (af.no !== 12 || af.w !== 2 || !af.p || !af.p.length) continue;
+      const kv = parse(af.p);
+      if (!kv || !kv.length) continue;
+      const kf = first(kv, 1);
+      const vf = first(kv, 2);
+      const ks = kf && kf.w === 2 ? text(kf) : null;
+      const vs = vf && vf.w === 2 ? text(vf) : null;
+      if (!ks) continue;
+      for (const pair of PLAYLIST_MIX_ATTRS) {
+        if (ks.toLowerCase() === pair[0]) {
+          seen[pair[0]] = true;
+          if (vs !== pair[1]) {
+            af.p = serialize([fieldString(1, pair[0]), fieldString(2, pair[1])]);
+            changed = true;
+          }
+          break;
+        }
+      }
+    }
+
+    for (const pair of PLAYLIST_MIX_ATTRS) {
+      if (!seen[pair[0]]) {
+        attrFields.push(fieldBytes(12, serialize([fieldString(1, pair[0]), fieldString(2, pair[1])])));
+        changed = true;
+      }
+    }
+
+    if (!changed) return null;
+    f3.p = serialize(attrFields);
+    return serialize(fields);
+  }
+
   // ------------------------------------------------------------------- entry
 
   const isPam = /(?:pam-view-service|pam\.v2|PamViewService|pam-account|GetYourPremiumBadge|GetPlanOverview|GetShowValuePlanOverview|GetPremiumPlanRow)/i.test(url);
@@ -2226,11 +2306,13 @@
   const isFortune = /net-fortune/i.test(url);
   const isJam = /(?:jam_status|connect-group|social-connect|sessions\/current|refresh-group-data)/i.test(url);
   const isCaps = /(?:device-capabilities|capabilities|audio-quality)/i.test(url);
+  const isPlaylist = /(?:\/playlist-v2\/|\/playlist\/|\/signals(?:\?|$)|\/diff(?:\?|$))/i.test(url);
 
   function patchOne(b) {
     if (isBadgeDevice) return null;
     if (isGetYourPremiumBadge) return patchBadgeExact(b);
     if (isGetPremiumPlanRow) return patchPlanRow(b) || patchPam(b);
+    if (isPlaylist) return patchPlaylistMix(b);
     if (isFortune) return patchFortune(b) || patchUniversal(b);
     if (isJam) return patchJamWrapped(b);
     if (isCaps) return patchCapabilities(b) || patchUniversal(b);

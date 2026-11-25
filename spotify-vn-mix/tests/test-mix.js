@@ -164,6 +164,36 @@ test("v1/capabilities: audio_quality='VERY_HIGH' và effective_license='premium'
   assert.strictEqual(parsed.can_play_on_demand, true);
 });
 
+// 6. SelectedListContent (/playlist-v2/v2/playlist/<id>/signals & /diff): bơm 5 cờ f12 của Nút Phối
+test("SelectedListContent (/signals & /diff): ghi đè mix='false' -> 'true' và bơm đủ 5 cờ f12 (can-view-transition, automix.mode, mix, mix-type, automix.queue)", () => {
+  const rev24 = Buffer.from("0000000094eab401d0000000000000000000000000000000", "hex");
+  const trackSignal88 = Buffer.from("0a1c3331746a6b7631323334353637383930", "hex");
+  const signalsOff = cat(
+    fBytes(1, rev24),
+    fVarint(2, 56),
+    fBytes(3, cat(
+      fStr(1, "Hiệp"),
+      fBytes(12, cat(fStr(1, "mix"), fStr(2, "false")))
+    )),
+    fBytes(5, cat(
+      fVarint(1, 0),
+      fVarint(2, 0),
+      fBytes(3, cat(fStr(1, "spotify:track:15PnF9NOMz9Sdy17LVMlg9"), fBytes(2, trackSignal88)))
+    ))
+  );
+  const res = runResponseScript(
+    "https://spclient.wg.spotify.com/playlist-v2/v2/playlist/4YvPfs7WpoADAovoaFjRPQ/signals",
+    signalsOff
+  );
+  assert(res && res.body, "Phải trả về body đã patch f3.f12");
+  const b = Buffer.from(res.body);
+  assert(!b.includes(Buffer.from("false", "utf8")), "Không được còn mix=false");
+  for (const expected of ["can-view-transition", "automix.mode", "auto", "allow-custom", "automix.queue", "Hiệp"]) {
+    assert(b.includes(Buffer.from(expected, "utf8")), "Phải chứa " + expected);
+  }
+  assert(b.includes(trackSignal88), "Phải giữ nguyên 100% byte signal của từng bài trong f5");
+});
+
 console.log("\n--------------------------------------------------------------");
 console.log(`  PASS: ${pass}    FAIL: ${fail}`);
 console.log("--------------------------------------------------------------\n");
