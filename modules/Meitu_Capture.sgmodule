@@ -1,12 +1,12 @@
-#!name=Meitu Capture (Bắt gói tin)
-#!desc=Chỉ ghi log request & JSON response VIP trên Meitu/Wink, không sửa dữ liệu (tắt module VIP trước khi bật)
+#!name=Meitu Capture (Bắt gói tin + Bơm .db)
+#!desc=Bắt gói tin Meitu VN (com.meitu.mtxx) & Wink: nổi thông báo khi MITM ăn và tự bơm body JSON (zcap=) vào file log .db của Shadowrocket
 #!author=MinhHiep08
 #!system=ios
 #!homepage=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/modules/Meitu_Capture.sgmodule
 
 [MITM]
-hostname = %APPEND% api-sub.meitu.com, h5.xiuxiu.meitu.com, api.xiuxiu.meitu.com, api.meitu.com
+hostname = %APPEND% api-sub.meitu.com, h5.xiuxiu.meitu.com, api.xiuxiu.meitu.com, tool.xiuxiu.meitu.com, api.account.meitu.com, account.meitu.com, api.cloud.meitu.com, api.data.meitu.com
 
 [Script]
-MeituCapReq = type=http-request,pattern=^https?:\/\/(?:api-sub|api|h5\.xiuxiu|api\.xiuxiu)\.meitu\.com\/,requires-body=0,timeout=10,script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/js/MeiTuCapture.js
-MeituCapResp = type=http-response,pattern=^https?:\/\/(?:api-sub|api|h5\.xiuxiu|api\.xiuxiu)\.meitu\.com\/,requires-body=1,max-size=524288,timeout=10,script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/js/MeiTuCapture.js
+MeituCapResp = type=http-response,pattern=^https?:\/\/(?:api-sub|h5\.xiuxiu|api\.xiuxiu|tool\.xiuxiu|api\.account|account|api\.cloud|api\.data)\.meitu\.com\/,requires-body=1,max-size=524288,timeout=10,script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/js/MeiTuCapture.js
+MeituCapDrip = type=http-request,pattern=^https?:\/\/(?:(?:api-sub|h5\.xiuxiu|api\.xiuxiu|tool\.xiuxiu|api\.account|account|api\.cloud|api\.data|adui\.tg|rabbit\.tg)\.meitu\.com\/|itunes\.apple\.com\/lookup\?bundleId=com\.meitu),requires-body=0,timeout=10,script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/js/MeiTuCapture.js
