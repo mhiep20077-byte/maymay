@@ -1,16 +1,16 @@
 /***************************************************************
- * MeiTuProbe_v5.js  —  CHI GHI LOG, KHONG SUA GI
+ * MeiTuProbe.js  —  CHI GHI LOG, KHONG SUA GI (v6)
  *
- * Muc dich: tim dung endpoint chua du lieu VIP tren Meitu 12.23.5
+ * Muc dich: tim dung endpoint & ten key VIP tren Meitu
  * An toan: $done({}) o moi nhanh -> khong bao gio lam hong response
  *
- * Pattern (o regex khi add script trong Shadowrocket):
+ * Pattern Shadowrocket:
  *   ^https?://api-sub\.meitu\.com/
- *
- * Xem log o: Shadowrocket -> tab Script / Log, hoac Log -> Script Log
  ***************************************************************/
 
 var RX_VIP = /(vip|svip|premium|member|privile|entitle|subscri|trial|expire|valid_?time|rights|gold|benefit|pay|order)/i;
+// Khong dung vao path xu ly anh/upload/tai nguyen lieu
+var RX_EXCLUDE_PATH = /\/(beautify|process|material|upload|download|cdn)\b/i;
 var MAX_FIELDS = 25;
 var MAX_BODY = 400000;
 
@@ -44,7 +44,9 @@ function walk(node, path, depth, out) {
 }
 
 function run() {
-  var url = $request.url || '';
+  var url = ($request && $request.url) || '';
+  if (RX_EXCLUDE_PATH.test(url)) { $done({}); return; }
+
   var host = '';
   var path = '';
 
@@ -55,7 +57,7 @@ function run() {
 
   var resp = $response || {};
   var body = (typeof resp.body === 'string') ? resp.body : '';
-  var st = resp.statusCode || 0;
+  var st = Number(resp.statusCode || resp.status || 0);
   var info = '[PROBE] ' + host + path + ' st=' + st + ' len=' + body.length;
 
   try {

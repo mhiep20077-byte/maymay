@@ -1,30 +1,17 @@
-#!name=Meitu VIP v5 (narrow)
-#!desc=Mo khoa VIP Meitu XiuXiu 12.23.5 - chi MITM api-sub.meitu.com, khong dung CDN anh
+#!name=Meitu VIP v6 (narrow)
+#!desc=Mo khoa VIP Meitu XiuXiu & Wink - chi MITM api-sub.meitu.com, khong dung CDN anh hay meitudata.com
+#!author=MinhHiep08
 #!system=ios
-#!=========================================================
-# v5 - ban HEP. Chi 1 host API. Khong dung *.meitu.com / meitudata.com
-#
-# script-path tro ve root repo (dung ten file co san):
-#   MeiTuVIP.js   = patch
-#   MeiTuProbe.js = chi ghi log
-#
-# Link module de import vao Shadowrocket:
-#   https://cdn.jsdelivr.net/gh/mhiep20077-byte/maymay@main/Meitu.sgmodule
-# hoac:
-#   https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/Meitu.sgmodule
-# ==========================================================
+#!homepage=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/Meitu.sgmodule
 
 [MITM]
-hostname = %APPEND%, api-sub.meitu.com
+hostname = %APPEND% api-sub.meitu.com
 
 [Script]
-Meitu VIP v5 = type=http-response,pattern=^https?://api-sub\.meitu\.com/,requires-body=1,max-size=524288,timeout=10,script-path=https://cdn.jsdelivr.net/gh/mhiep20077-byte/maymay@main/MeiTuVIP.js
+Meitu VIP v6 = type=http-response,pattern=^https?://api-sub\.meitu\.com/,requires-body=1,max-size=524288,timeout=10,script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/MeiTuVIP.v6.js
 
-# Ban do endpoint: bo # dong duoi, comment dong tren (khi VIP khong an)
-# Meitu PROBE v5 = type=http-response,pattern=^https?://api-sub\.meitu\.com/,requires-body=1,max-size=524288,timeout=10,script-path=https://cdn.jsdelivr.net/gh/mhiep20077-byte/maymay@main/MeiTuProbe.js
+# Ban do endpoint: bo # dong duoi, comment dong tren khi can xem log key VIP
+# Meitu PROBE v6 = type=http-response,pattern=^https?://api-sub\.meitu\.com/,requires-body=1,max-size=524288,timeout=10,script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/MeiTuProbe.js
 
-# ==========================================================
-# TUYET DOI KHONG them vao hostname:
-#   *.meitu.com / *.xiuxiu.meitu.com / meitudata.com / res / file / img
-# Do la CDN anh -> MITM vao la app bao "loi ket noi mang" khi chinh anh.
-# ==========================================================
+# TUYET DOI KHONG them *.meitu.com / *.xiuxiu.meitu.com / meitudata.com / CDN anh vao hostname
+# (lam sap bootstrap/pinning va bao "loi ket noi mang")

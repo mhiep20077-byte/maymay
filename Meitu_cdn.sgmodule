@@ -1,0 +1,13 @@
+#!name=Meitu VIP v6 (narrow, jsDelivr CDN)
+#!desc=Mo khoa VIP Meitu XiuXiu & Wink - ban du phong qua jsDelivr CDN khi mang chan raw.githubusercontent
+#!author=MinhHiep08
+#!system=ios
+#!homepage=https://cdn.jsdelivr.net/gh/mhiep20077-byte/maymay@main/Meitu_cdn.sgmodule
+
+[MITM]
+hostname = %APPEND% api-sub.meitu.com
+
+[Script]
+Meitu VIP v6 = type=http-response,pattern=^https?://api-sub\.meitu\.com/,requires-body=1,max-size=524288,timeout=10,script-path=https://cdn.jsdelivr.net/gh/mhiep20077-byte/maymay@main/MeiTuVIP.v6.js
+
+# Meitu PROBE v6 = type=http-response,pattern=^https?://api-sub\.meitu\.com/,requires-body=1,max-size=524288,timeout=10,script-path=https://cdn.jsdelivr.net/gh/mhiep20077-byte/maymay@main/MeiTuProbe.js

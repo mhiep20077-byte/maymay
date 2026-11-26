@@ -1,18 +1,13 @@
-#!name=Meitu VIP v5 (narrow, raw)
-#!desc=Ban y het Meitu.sgmodule nhung script lay tu raw.githubusercontent (cap nhat tuc thi, khong cache)
+#!name=Meitu VIP v6 (narrow, raw)
+#!desc=Mo khoa VIP Meitu XiuXiu & Wink - ban raw.githubusercontent (cap nhat tuc thi)
+#!author=MinhHiep08
 #!system=ios
-#!=========================================================
-# Dung ban nay khi jsDelivr con cache ban cu.
-# Nhuoc diem: raw.githubusercontent hay bi chan o mang VN -> mo thu bang Safari truoc.
-#
-# Link module:
-#   https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/Meitu_raw.sgmodule
-# ==========================================================
+#!homepage=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/Meitu_raw.sgmodule
 
 [MITM]
-hostname = %APPEND%, api-sub.meitu.com
+hostname = %APPEND% api-sub.meitu.com
 
 [Script]
-Meitu VIP v5 = type=http-response,pattern=^https?://api-sub\.meitu\.com/,requires-body=1,max-size=524288,timeout=10,script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/MeiTuVIP.js
+Meitu VIP v6 = type=http-response,pattern=^https?://api-sub\.meitu\.com/,requires-body=1,max-size=524288,timeout=10,script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/MeiTuVIP.v6.js
 
-# Meitu PROBE v5 = type=http-response,pattern=^https?://api-sub\.meitu\.com/,requires-body=1,max-size=524288,timeout=10,script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/MeiTuProbe.js
+# Meitu PROBE v6 = type=http-response,pattern=^https?://api-sub\.meitu\.com/,requires-body=1,max-size=524288,timeout=10,script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/MeiTuProbe.js

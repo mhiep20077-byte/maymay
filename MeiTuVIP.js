@@ -1,39 +1,48 @@
 /***************************************************************
- * MeiTuVIP_v5.js  —  patch quyen VIP Meitu (ban HEP)
+ * MeiTuVIP.v6.js  —  Meitu VIP L2 subscription JSON rewrite (narrow)
  *
- * Nguyen tac an toan (7 lop):
+ * Nguyen tac an toan (8 lop):
  *   1) Chi chay tren host trong ALLOW_HOSTS (mac dinh: api-sub.meitu.com)
- *   2) Body khong phai JSON  -> tra nguyen ban
- *   3) JSON parse fail       -> tra nguyen ban
- *   4) Khong tim thay field VIP nao -> tra nguyen ban
- *   5) Bat ky exception nao  -> tra nguyen ban
- *   6) Chi xu ly HTTP 200, body < MAX_BODY
- *   7) DRY = true -> chi log, KHONG sua (xem truoc)
+ *   2) Loai tru path xu ly anh/tai nguyen lieu (/beautify, /process, /material, /upload, /download, /cdn)
+ *      de khong lam hong upload, export va tab template
+ *   3) Chi xu ly HTTP 200, bo qua binary/HTML qua Content-Type, body <= MAX_BODY
+ *   4) Body khong phai JSON object/array -> $done({}) giu nguyen ban
+ *   5) JSON parse fail -> $done({}) giu nguyen ban
+ *   6) Khong tim thay field VIP nao -> $done({}) giu nguyen ban
+ *   7) Giu nguyen kieu du lieu (int / bool / string) theo payload thuc te
+ *   8) Bat ky exception nao -> $done({}) giu nguyen ban
  *
- * => Khong bao gio cham CDN anh / video / template
- * => Khong con "loi ket noi mang" nhu ban v1 (max-size=-1 + meitudata.com)
- *
- * Pattern khi add script trong Shadowrocket:
+ * Pattern Shadowrocket:
  *   ^https?://api-sub\.meitu\.com/
  ***************************************************************/
 
 var DRY = false;                                  // true = chi in log, khong sua
-var ALLOW_HOSTS = ['api-sub.meitu.com'];          // them 'api.meitu.com' neu probe cho thay VIP nam o do
-var MAX_BODY = 300000;                            // 300KB, qua thi bo qua
+var ALLOW_HOSTS = ['api-sub.meitu.com'];          // [VERIFIED] chi MITM & patch host subscription
+var MAX_BODY = 300000;                            // 300KB, vuot qua thi pass-through
 var MAX_CHANGE = 40;                              // toi da 40 field / response
+var VIP_DISPLAY_NAME = 'Minh Hiệp VIP';           // [VERIFIED] chi ghi khi object co field VIP
 
 var NOW = Math.floor(Date.now() / 1000);
 var TEN_YEARS = 315360000;
 
+// Khong bao gio dung vao path xu ly anh/upload/tai nguyen lieu de tranh loi ket noi mang
+var RX_EXCLUDE_PATH = /\/(beautify|process|material|upload|download|cdn)\b/i;
+
 /* --- nhan dien ten field --- */
+// is_expire / is_expired / isExpired [VERIFIED]
+var RX_EXPIRE_FLAG = /^is_?expired?$/i;
+
+// expire_days / expireDays [VERIFIED] (so am = long-lived)
+var RX_EXPIRE_DAYS = /^expire_?days?$/i;
+
 // is_vip / isVip / vip / vipStatus / svip_flag / member / is_member / subscriber / paid ...
 var RX_BOOL = /^(is_?)?(vip|svip|member|premium|gold|paid|subscri(ber|bed))(_?(status|flag|valid|active|enabled))?$/i;
 
-// vip_type / vipType / vip_level / memberType / user_level / privilege_level ...
-var RX_NUM  = /^((vip|svip|member|premium)_?(type|level|status|grade)|user_?level|privilege_?level)$/i;
+// vip_type / vipType / vip_level / memberType / user_level / privilege_level ... [VERIFIED]
+var RX_NUM = /^((vip|svip|member|premium)_?(type|level|status|grade)|user_?level|privilege_?level)$/i;
 
-// expireTime / expire_at / expiredAt / vipEndTime / endTime / validTo / deadline ...
-var RX_TIME = /(expire|expired|deadline|valid_?(to|until|end)|end_?(time|at|date)|vip_?end|due_?date)/i;
+// valid_time / expire_time / expireTime / expire_at / vipEndTime / validTo / deadline ... [VERIFIED]
+var RX_TIME = /^(valid_?(time|to|until|end)|expire_?(time|at|date)|expired_?(time|at|date)|end_?(time|at|date)|vip_?end(_?(time|at|date))?|deadline|due_?date)$/i;
 
 // remaining_days / leftDays / days_left / valid_days ...
 var RX_DAYS = /^(remaining_?days?|left_?days?|valid_?days?|rest_?days?|remain_?days?|days_?left)$/i;
@@ -59,34 +68,72 @@ function walk(node, path, depth) {
     return;
   }
 
+  var objHasVipKey = false;
+
   for (k in node) {
     if (!Object.prototype.hasOwnProperty.call(node, k)) continue;
     v = node[k];
     lk = String(k);
 
-    // di sau vao object/array
     if (v !== null && typeof v === 'object') {
       walk(v, path + '.' + lk, depth + 1);
       continue;
     }
     if (v === null) continue;
 
-    /* 1) boolean co VIP -> true */
-    if (typeof v === 'boolean' && RX_BOOL.test(lk) && v === false) {
-      touch(path + '.' + lk, v, true);
-      if (!DRY) node[k] = true;
+    /* 1) is_expire / is_expired -> 0 / false [VERIFIED] */
+    if (RX_EXPIRE_FLAG.test(lk)) {
+      objHasVipKey = true;
+      if (typeof v === 'number' && v !== 0) {
+        touch(path + '.' + lk, v, 0);
+        if (!DRY) node[k] = 0;
+      } else if (typeof v === 'boolean' && v === true) {
+        touch(path + '.' + lk, v, false);
+        if (!DRY) node[k] = false;
+      } else if (typeof v === 'string' && (v === '1' || v === 'true')) {
+        var repExp = v === 'true' ? 'false' : '0';
+        touch(path + '.' + lk, v, repExp);
+        if (!DRY) node[k] = repExp;
+      }
       continue;
     }
 
-    /* 2) so cap VIP = 0 -> 1 */
-    if (typeof v === 'number' && RX_NUM.test(lk) && v <= 0) {
-      touch(path + '.' + lk, v, 1);
-      if (!DRY) node[k] = 1;
+    /* 2) expire_days -> -999 (long-lived) [VERIFIED] */
+    if (RX_EXPIRE_DAYS.test(lk)) {
+      objHasVipKey = true;
+      if (typeof v === 'number' && v >= 0) {
+        touch(path + '.' + lk, v, -999);
+        if (!DRY) node[k] = -999;
+      } else if (typeof v === 'string' && /^\d+$/.test(v)) {
+        touch(path + '.' + lk, v, '-999');
+        if (!DRY) node[k] = '-999';
+      }
       continue;
     }
 
-    /* 3) string so cap VIP "0" -> "1" */
+    /* 3) boolean co VIP -> true */
+    if (typeof v === 'boolean' && RX_BOOL.test(lk)) {
+      objHasVipKey = true;
+      if (v === false) {
+        touch(path + '.' + lk, v, true);
+        if (!DRY) node[k] = true;
+      }
+      continue;
+    }
+
+    /* 4) so cap VIP (vip_type, ...) = 0 -> 1 [VERIFIED] */
+    if (typeof v === 'number' && RX_NUM.test(lk)) {
+      objHasVipKey = true;
+      if (v <= 0) {
+        touch(path + '.' + lk, v, 1);
+        if (!DRY) node[k] = 1;
+      }
+      continue;
+    }
+
+    /* 5) string so cap VIP "0" -> "1" */
     if (typeof v === 'string' && RX_NUM.test(lk) && /^-?\d+$/.test(v)) {
+      objHasVipKey = true;
       n = parseInt(v, 10);
       if (n <= 0) {
         touch(path + '.' + lk, v, '1');
@@ -95,39 +142,73 @@ function walk(node, path, depth) {
       continue;
     }
 
-    /* 4) timestamp het han (giay) -> +10 nam */
-    if (typeof v === 'number' && RX_TIME.test(lk) && v > 1000000000) {
-      sec = v > 1e12 ? Math.floor(v / 1000) : v;
-      if (sec < NOW + 86400) {
-        var nv = (v > 1e12) ? (NOW + TEN_YEARS) * 1000 : (NOW + TEN_YEARS);
-        touch(path + '.' + lk, v, nv);
-        if (!DRY) node[k] = nv;
+    /* 6) timestamp het han (valid_time, expire_time, ...) -> +10 nam [VERIFIED] */
+    if (typeof v === 'number' && RX_TIME.test(lk)) {
+      objHasVipKey = true;
+      if (v === 0) {
+        var nv0 = NOW + TEN_YEARS;
+        touch(path + '.' + lk, v, nv0);
+        if (!DRY) node[k] = nv0;
+      } else if (v > 1000000000) {
+        sec = v > 1e12 ? Math.floor(v / 1000) : v;
+        if (sec < NOW + 86400) {
+          var nv = (v > 1e12) ? (NOW + TEN_YEARS) * 1000 : (NOW + TEN_YEARS);
+          touch(path + '.' + lk, v, nv);
+          if (!DRY) node[k] = nv;
+        }
       }
       continue;
     }
 
-    /* 5) timestamp het han (string 10 so) */
-    if (typeof v === 'string' && RX_TIME.test(lk) && /^\d{10}$/.test(v)) {
-      if (parseInt(v, 10) < NOW + 86400) {
-        var sv = String(NOW + TEN_YEARS);
-        touch(path + '.' + lk, v, sv);
-        if (!DRY) node[k] = sv;
+    /* 7) timestamp het han dang string ("0" hoac 10/13 chu so) */
+    if (typeof v === 'string' && RX_TIME.test(lk)) {
+      objHasVipKey = true;
+      if (v === '0' || /^\d{10}$/.test(v)) {
+        if (v === '0' || parseInt(v, 10) < NOW + 86400) {
+          var sv = String(NOW + TEN_YEARS);
+          touch(path + '.' + lk, v, sv);
+          if (!DRY) node[k] = sv;
+        }
+      } else if (/^\d{13}$/.test(v)) {
+        if (Math.floor(parseInt(v, 10) / 1000) < NOW + 86400) {
+          var svMs = String((NOW + TEN_YEARS) * 1000);
+          touch(path + '.' + lk, v, svMs);
+          if (!DRY) node[k] = svMs;
+        }
       }
       continue;
     }
 
-    /* 6) so ngay con lai -> 3650 */
-    if (typeof v === 'number' && RX_DAYS.test(lk) && v < 365) {
-      touch(path + '.' + lk, v, 3650);
-      if (!DRY) node[k] = 3650;
+    /* 8) so ngay con lai -> 3650 */
+    if (typeof v === 'number' && RX_DAYS.test(lk)) {
+      objHasVipKey = true;
+      if (v < 365) {
+        touch(path + '.' + lk, v, 3650);
+        if (!DRY) node[k] = 3650;
+      }
       continue;
     }
 
-    /* 7) string co VIP gia ("0"/"false"/"") -> "1" */
-    if (typeof v === 'string' && RX_BOOL.test(lk) && (v === '0' || v === 'false' || v === '')) {
-      touch(path + '.' + lk, v, '1');
-      if (!DRY) node[k] = '1';
+    /* 9) string co VIP gia ("0"/"false"/"") -> "1" */
+    if (typeof v === 'string' && RX_BOOL.test(lk)) {
+      objHasVipKey = true;
+      if (v === '0' || v === 'false' || v === '') {
+        var repBool = v === 'false' ? 'true' : '1';
+        touch(path + '.' + lk, v, repBool);
+        if (!DRY) node[k] = repBool;
+      }
     }
+  }
+
+  // Chi doi screen_name khi chinh object nay da xac nhan la payload VIP [VERIFIED]
+  if (
+    objHasVipKey &&
+    Object.prototype.hasOwnProperty.call(node, 'screen_name') &&
+    typeof node.screen_name === 'string' &&
+    node.screen_name !== VIP_DISPLAY_NAME
+  ) {
+    touch(path + '.screen_name', node.screen_name, VIP_DISPLAY_NAME);
+    if (!DRY) node.screen_name = VIP_DISPLAY_NAME;
   }
 }
 
@@ -136,7 +217,7 @@ function pass() {
 }
 
 function run() {
-  var url = $request.url || '';
+  var url = ($request && $request.url) || '';
   var host = '';
 
   try {
@@ -146,10 +227,15 @@ function run() {
   }
 
   if (ALLOW_HOSTS.indexOf(host) < 0) { pass(); return; }
+  if (RX_EXCLUDE_PATH.test(url)) { pass(); return; }
 
   var resp = $response || {};
-  var st = resp.statusCode || 0;
+  var st = Number(resp.statusCode || resp.status || 0);
   if (st && st !== 200) { pass(); return; }
+
+  var headers = resp.headers || {};
+  var ct = String(headers['Content-Type'] || headers['content-type'] || '');
+  if (ct && !/json|javascript|text\/plain/i.test(ct)) { pass(); return; }
 
   var body = (typeof resp.body === 'string') ? resp.body : '';
   if (!body || body.length > MAX_BODY) { pass(); return; }
