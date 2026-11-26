@@ -1,0 +1,11 @@
+#!name=Wink VIP
+#!desc=Mở khóa VIP Wink (Meitu) — bản sạch không popup, chống lỗi mạng
+#!author=duyvinh09 & MinhHiep08
+#!system=ios
+#!homepage=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/modules/Wink.sgmodule
+
+[MITM]
+hostname = %APPEND% api-sub.meitu.com
+
+[Script]
+WinkVIP = type=http-response,pattern=^https?:\/\/api-sub\.meitu\.com\/v2\/user\/vip_info_by_group\.json,requires-body=1,max-size=524288,timeout=10,script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/js/WinkVipCrack.js

@@ -1,0 +1,12 @@
+#!name=Meitu Capture (Bắt gói tin)
+#!desc=Chỉ ghi log request & JSON response VIP trên Meitu/Wink, không sửa dữ liệu (tắt module VIP trước khi bật)
+#!author=MinhHiep08
+#!system=ios
+#!homepage=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/modules/Meitu_Capture.sgmodule
+
+[MITM]
+hostname = %APPEND% api-sub.meitu.com, h5.xiuxiu.meitu.com, api.xiuxiu.meitu.com, api.meitu.com
+
+[Script]
+MeituCapReq = type=http-request,pattern=^https?:\/\/(?:api-sub|api|h5\.xiuxiu|api\.xiuxiu)\.meitu\.com\/,requires-body=0,timeout=10,script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/js/MeiTuCapture.js
+MeituCapResp = type=http-response,pattern=^https?:\/\/(?:api-sub|api|h5\.xiuxiu|api\.xiuxiu)\.meitu\.com\/,requires-body=1,max-size=524288,timeout=10,script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/js/MeiTuCapture.js

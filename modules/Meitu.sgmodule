@@ -1,0 +1,12 @@
+#!name=Meitu VIP
+#!desc=Mở khóa VIP Meitu XiuXiu (bản sạch, thu hẹp pattern + max-size=524288 chống lỗi mạng)
+#!author=duyvinh09 & MinhHiep08
+#!system=ios
+#!homepage=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/modules/Meitu.sgmodule
+
+[MITM]
+hostname = %APPEND% h5.xiuxiu.meitu.com, api.xiuxiu.meitu.com, api-sub.meitu.com
+
+[Script]
+MeituVIP = type=http-response,pattern=^https?:\/\/(?:h5|api)\.xiuxiu\.meitu\.com\/v\d+\/(?:h\d+\/vip\/(?:sub_detail|user_detail)|vip\/(?:vip_show|prompt\/query)|user\/show|account\/verify_credentials)\.json,requires-body=1,max-size=524288,timeout=10,script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/js/MeiTuXiuXiu.js
+MeituSubVIP = type=http-response,pattern=^https?:\/\/api-sub\.meitu\.com\/v\d+\/(?:user|vip)\/,requires-body=1,max-size=524288,timeout=10,script-path=https://raw.githubusercontent.com/mhiep20077-byte/maymay/main/js/MeiTuXiuXiu.js
